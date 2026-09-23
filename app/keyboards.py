@@ -5,15 +5,16 @@ from urllib.parse import quote
 from app.universities import University
 from app.vk import Keyboard
 
-PAGE_SIZE = 8
+# 6 вузов + перелистывание + выход = 9 кнопок при лимите VK в 10
+PAGE_SIZE = 6
 
 
 def total_pages(items: list[University]) -> int:
     return max(1, -(-len(items) // PAGE_SIZE))
 
 
-def universities_kb(items: list[University], page: int = 0) -> Keyboard:
-    """Страница списка вузов: 8 кнопок плюс перелистывание по кругу. Номер страницы — в тексте."""
+def universities_kb(items: list[University], page: int = 0, is_admin: bool = False) -> Keyboard:
+    """Страница списка вузов: кнопки вузов, перелистывание и выход с экрана."""
     pages = total_pages(items)
     page %= pages  # с последней страницы «вперёд» уводит на первую
 
@@ -27,6 +28,9 @@ def universities_kb(items: list[University], page: int = 0) -> Keyboard:
             Keyboard.btn("‹ Назад", f"list:{page - 1}"),
             Keyboard.btn("Вперёд ›", f"list:{page + 1}"),
         )
+    # с любого экрана должно быть куда выйти: VK старые кнопки не показывает
+    kb.row(Keyboard.btn("🛠 Админка", "adm:home") if is_admin
+           else Keyboard.btn("🏠 В начало", "home"))
     return kb
 
 

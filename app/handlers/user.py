@@ -87,7 +87,8 @@ def _list_title(ctx: Ctx, page: int) -> str:
 
 
 async def cmd_list(ctx: Ctx, message: Message) -> None:
-    await ctx.reply(message.peer_id, _list_title(ctx, 0), kb.universities_kb(ctx.registry.items))
+    await ctx.reply(message.peer_id, _list_title(ctx, 0),
+                    kb.universities_kb(ctx.registry.items, 0, ctx.is_admin(message.user)))
 
 
 async def cmd_stats(ctx: Ctx, message: Message) -> None:
@@ -169,7 +170,13 @@ async def on_callback(ctx: Ctx, cb: Callback) -> None:
             page = int(raw_page)
         except ValueError:
             page = 0
-        await ctx.edit(cb, _list_title(ctx, page), kb.universities_kb(ctx.registry.items, page))
+        await ctx.edit(cb, _list_title(ctx, page),
+                       kb.universities_kb(ctx.registry.items, page, ctx.is_admin(cb.user)))
+        await ctx.answer(cb)
+        return
+
+    if data == "home":
+        await ctx.edit(cb, texts.GREETING, kb.greeting_kb(ctx.is_admin(cb.user)))
         await ctx.answer(cb)
         return
 

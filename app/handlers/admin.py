@@ -609,30 +609,38 @@ async def cmd_export(ctx: Ctx, message: Message) -> None:
 
 
 async def cmd_makechats(ctx: Ctx, message: Message, arg: str = "") -> None:
-    """Показать, каким вузам не хватает беседы, и предложить создать их."""
-    from app.chats import chat_title, missing_chats
+    """Показать, каким вузам не хватает беседы, и включить фоновую очередь."""
+    from app.chats import FACTORY_INTERVAL, chat_title, factory_running, missing_chats
 
     left = await missing_chats(ctx)
-    if not left:
-        await ctx.reply(message.peer_id, "У всех вузов из списка беседа уже есть.",
-                        kb.admin_back_kb())
-        return
-
-    names = ", ".join(u.title for u in left[:12]) + ("…" if len(left) > 12 else "")
+    running = await factory_running(ctx)
     markup = Keyboard()
-    markup.button(f"🏗 Создать {len(left)} бесед", "adm:mkchats_go")
+
+    if not left:
+        text = "У всех вузов из списка беседа уже есть."
+    else:
+        minutes = max(1, round(len(left) * FACTORY_INTERVAL / 60))
+        text = (
+            f"🏗 Беседы вузов\n\n"
+            f"Без беседы: {len(left)} из {len(ctx.registry.items)}\n"
+            f"{', '.join(u.title for u in left[:12])}{'…' if len(left) > 12 else ''}\n\n"
+            f"Бот создаёт их сам и становится владельцем — права выдавать не придётся. "
+            f"Название: «{chat_title(left[0])}».\n"
+            f"В каждой беседе он закрепит описание и опубликует объяснение для студентов, "
+            f"а ссылку-приглашение положит в карточку вуза.\n\n"
+            f"VK не даёт создавать беседы подряд, поэтому очередь идёт по одной примерно "
+            f"раз в {round(FACTORY_INTERVAL / 60)} мин — это около {minutes} мин на все. "
+            f"Бот доделает сам, даже если его перезапустить."
+        )
+        if running:
+            text += "\n\n▶️ Очередь уже идёт."
+            markup.button("⏹ Остановить", "adm:mkchats_stop")
+        else:
+            markup.button(f"🏗 Создать {len(left)} бесед", "adm:mkchats_go")
+
     markup.button("⬅️ В админку", "adm:home")
     markup.adjust(1)
-    await ctx.reply(
-        message.peer_id,
-        f"🏗 Беседы вузов\n\n"
-        f"Без беседы: {len(left)} из {len(ctx.registry.items)}\n{names}\n\n"
-        f"Бот создаст их сам и станет в них владельцем — права выдавать не придётся. "
-        f"Название: «{chat_title(left[0])}».\n"
-        f"В каждую беседу бот сразу опубликует объяснение для студентов, "
-        f"а ссылку-приглашение положит в карточку вуза.",
-        markup,
-    )
+    await ctx.reply(message.peer_id, text, markup)
 
 
 async def cmd_ticket(ctx: Ctx, message: Message, code: str) -> None:
@@ -686,21 +694,6 @@ async def on_private_command(ctx: Ctx, message: Message, name: str, arg: str) ->
     return True
 
 
-async def _make_chats_job(ctx: Ctx, peer_id: int, user_id: int) -> None:
-    from app.chats import create_missing_chats
-
-    async def progress(done: int) -> None:
-        await ctx.safe_send(peer_id, f"🏗 Создано бесед: {done}…")
-
-    result = await create_missing_chats(ctx, user_id, progress)
-    lines = [f"🏗 Готово. Создано бесед: {len(result['created'])}"]
-    if result["failed"]:
-        lines.append(f"Не получилось: {len(result['failed'])}")
-        lines += [f"• {title} — {why}" for title, why in result["failed"][:5]]
-    lines += ["", "Ссылки лежат в карточках вузов: «🎓 Список вузов» → вуз → 🔗 Ссылка."]
-    await ctx.safe_send(peer_id, "\n".join(lines), kb.admin_back_kb())
-
-
 async def on_callback(ctx: Ctx, cb: Callback) -> None:
     db, registry = ctx.db, ctx.registry
     # ушёл из недозаполненной формы в меню — следующий текст уже не ответ на неё
@@ -717,12 +710,16 @@ async def on_callback(ctx: Ctx, cb: Callback) -> None:
         await cmd_makechats(ctx, Message(peer_id=cb.peer_id, from_id=cb.user_id, user=cb.user))
         return
 
-    if section == "mkchats_go":
-        from app.chats import create_missing_chats
-        from app.handlers.broadcast import start_in_background
+    if section in ("mkchats_go", "mkchats_stop"):
+        from app.chats import start_factory, stop_factory
 
-        await ctx.edit(cb, "🏗 Создаю беседы… Пришлю отчёт, когда закончу.", kb.admin_back_kb())
-        start_in_background(_make_chats_job(ctx, cb.peer_id, cb.user_id))
+        if section == "mkchats_stop":
+            await stop_factory(ctx)
+            await ctx.answer(cb, "Остановил")
+        else:
+            left = await start_factory(ctx, cb.user_id)
+            await ctx.answer(cb, f"Запустил: {left} бесед")
+        await cmd_makechats(ctx, Message(peer_id=cb.peer_id, from_id=cb.user_id, user=cb.user))
         return
 
     if section == "csv":

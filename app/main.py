@@ -8,6 +8,7 @@ from app.broadcaster import run_broadcaster
 from app.config import Config
 from app.db import Database
 from app.handlers import dispatch
+from app.chats import run_chat_factory
 from app.importer import run_dialog_sync
 from app.universities import UniversityRegistry
 from app.vk import VkApi
@@ -55,12 +56,15 @@ async def run() -> None:
         logger.warning("Рассылки %s прервались перезапуском — вернул в очередь", stuck)
     broadcaster = asyncio.create_task(run_broadcaster(api, db, registry))
     dialogs: asyncio.Task | None = None
+    factory: asyncio.Task | None = None
 
     try:
         await api.setup()
         await api.ensure_longpoll()
         # диалоги сообщества подтягиваем сами: люди, писавшие до бота, тоже получают рассылки
         dialogs = asyncio.create_task(run_dialog_sync(api, db))
+        # беседы вузов заводятся фоновой очередью: VK не даёт создавать их подряд
+        factory = asyncio.create_task(run_chat_factory(ctx))
         logger.info(
             "Запускаю vk.me/%s (club%d): %d вузов, админов %d (по id: %d, по адресу: %d)",
             api.screen_name, api.group_id, len(registry.items),
@@ -79,8 +83,9 @@ async def run() -> None:
             await asyncio.gather(*(_handle(ctx, update) for update in updates))
             await db.set_setting(TS_SETTING, str(ts))
     finally:
-        if dialogs is not None:
-            dialogs.cancel()
+        for task in (dialogs, factory):
+            if task is not None:
+                task.cancel()
         broadcaster.cancel()
         await db.close()
         await api.close()

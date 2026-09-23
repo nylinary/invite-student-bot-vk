@@ -120,6 +120,10 @@ class FakeVk(VkApi):
             return {"upload_url": "https://upload/doc"}
         if method == "docs.save":
             return {"type": "doc", "doc": {"id": 77, "owner_id": -GROUP_ID}}
+        if method == "photos.getChatUploadServer":
+            return {"upload_url": "https://upload/chatphoto"}
+        if method == "messages.setChatPhoto":
+            return {"message_id": 1, "chat": {}}
         if method == "photos.getMessagesUploadServer":
             return {"upload_url": "https://upload/photo"}
         if method == "photos.saveMessagesPhoto":
@@ -128,7 +132,7 @@ class FakeVk(VkApi):
 
     async def _upload(self, url, field, filename, content):
         calls.append(("upload", {"url": url, "filename": filename, "size": len(content)}))
-        return {"file": "f", "photo": "p", "server": 1, "hash": "h"}
+        return {"file": "f", "photo": "p", "server": 1, "hash": "h", "response": "chatphoto"}
 
     async def download(self, url):
         return b"image-bytes"
@@ -490,20 +494,31 @@ async def main() -> None:
     await feed(msg(f"/unbind {remote}", user=ADMIN))
     assert await db.get_chat_by_id(remote) is None
 
-    # 20г. бот сам создаёт беседы вузам, у которых их нет
+    # 20г. беседы вузов бот заводит сам, фоновой очередью по одной
     calls.clear()
     import app.chats as chats_mod
-    chats_mod.PAUSE = 0.0          # в прогоне паузы между созданием бесед не нужны
     before = len(await db.all_chats())
-    no_chat = [u.key for u in registry.items if u.key not in
-               {c["university_key"] for c in await db.all_chats()}]
+    no_chat = [u.key for u in registry.items
+               if u.key not in {c["university_key"] for c in await db.all_chats()}]
     await feed(msg("/makechats", user=ADMIN))
     offer = sends(ADMIN)[-1]
     assert f"Без беседы: {len(no_chat)}" in offer["message"], offer["message"]
     assert pressed(offer, "adm:mkchats_go"), offer
 
     await feed(press("adm:mkchats_go"))
-    await asyncio.sleep(2.0)
+    assert await db.get_setting(chats_mod.FACTORY_ON) == "1"
+    assert pressed(sends(ADMIN)[-1], "adm:mkchats_stop"), "нет кнопки остановки"
+
+    # прокручиваем очередь: по беседе за подход
+    chats_mod.FACTORY_INTERVAL = 0.01
+    factory = asyncio.create_task(chats_mod.run_chat_factory(ctx))
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if not await chats_mod.factory_running(ctx):
+            break
+    await asyncio.sleep(0.2)   # даём очереди дописать отчёт
+    factory.cancel()
+
     chats = await db.all_chats()
     assert len(chats) == before + len(no_chat), (before, len(chats))
     made = await db.get_chat("korabelka")
@@ -515,8 +530,8 @@ async def main() -> None:
     assert any("Бесплатные билеты" in t and "Корабелка" in t for t in in_chat), in_chat
     assert any("Система наград" in t for t in in_chat)
     assert any(m == "messages.pin" for m, _ in calls)
-    report = [t for t in texts_of() if "Создано бесед" in t][-1]
-    assert f"Создано бесед: {len(no_chat)}" in report, report
+    assert any(m == "messages.setChatPhoto" for m, _ in calls), "беседам не поставили аву"
+    assert any("Беседы вузов готовы" in t for t in texts_of()), "нет отчёта админам"
 
     # 21. проверка привязок
     calls.clear()
@@ -572,15 +587,19 @@ async def main() -> None:
     calls.clear()
     await feed(msg("/list"))
     first = sends(STUDENT)[-1]
+    # админ с того же экрана попадает в админку
+    await feed(msg("/list", user=ADMIN))
+    assert pressed(sends(ADMIN)[-1], "adm:home"), "админу некуда выйти со списка вузов"
     page1 = pressed(first, "uni:")
-    assert len(page1) == 8, page1
+    assert len(page1) == 6, page1
+    assert pressed(first, "home"), "со списка вузов некуда выйти"
     assert "страница 1 из" in first["message"]
 
     calls.clear()
     await feed(press("list:1", user=STUDENT))
     second = [p for m, p in calls if m == "messages.edit"][-1]
     page2 = pressed(second, "uni:")
-    assert len(page2) == 8 and not set(page1) & set(page2)
+    assert len(page2) == 6 and not set(page1) & set(page2)
     assert "страница 2 из" in second["message"]
 
     # 27. админка видит, сколько человек уже заработали билет, даже без нажатия кнопки

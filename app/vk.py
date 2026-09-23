@@ -323,6 +323,14 @@ class VkApi:
         doc = saved["doc"] if isinstance(saved, dict) else saved[0]
         return f"doc{doc['owner_id']}_{doc['id']}"
 
+    async def set_chat_photo(self, peer_id: int, content: bytes) -> Any:
+        """Аватар беседы. Сообществу VK это разрешает — в своих беседах оно владелец."""
+        server = await self.call(
+            "photos.getChatUploadServer", chat_id=peer_id - CHAT_PEER_OFFSET
+        )
+        uploaded = await self._upload(server["upload_url"], "file", "avatar.jpg", content)
+        return await self.call("messages.setChatPhoto", file=uploaded["response"])
+
     async def upload_photo(self, content: bytes, peer_id: int = 0) -> str:
         server = await self.call("photos.getMessagesUploadServer", peer_id=peer_id)
         uploaded = await self._upload(server["upload_url"], "photo", "photo.jpg", content)
