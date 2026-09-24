@@ -14,7 +14,7 @@ from app.config import Config
 from app.db import Database
 from app.handlers import dispatch
 from app.universities import UniversityRegistry
-from app.vk import CHAT_PEER_OFFSET, VkApi, VkApiError
+from app.vk import CHAT_PEER_OFFSET, VkApi, VkApiError, is_chat
 
 GROUP_ID = 555
 STUDENT, FRIEND, ADMIN, CURATOR = 1001, 1002, 9000, 1234
@@ -847,6 +847,28 @@ async def main() -> None:
     calls.clear()
     await feed(msg("/admin", user=ADMIN))
     assert "Админка" in texts_of()[-1]
+
+    # 38б. постоянное меню под полем ввода: приходит там, где своих кнопок нет
+    calls.clear()
+    await ctx.db.set_setting("noop", "1")           # любое сообщение без клавиатуры
+    await feed(action(GROUP, "chat_invite_user_by_link", 7001))   # уведомление владельцу
+    notify = [p for p in sends() if not is_chat(p["peer_id"])]
+    if notify:
+        markup = json.loads(notify[-1]["keyboard"])
+        assert markup["inline"] is False and markup["one_time"] is False, markup
+        labels = [b["action"]["label"] for row in markup["buttons"] for b in row]
+        assert "📋 Вузы" in labels, labels
+
+    # нажатие такой кнопки приходит обычным сообщением с payload
+    calls.clear()
+    await feed(msg("📋 Вузы", payload={"c": "list"}))
+    assert "Выбери свой вуз" in texts_of()[-1], texts_of()[-1]
+    calls.clear()
+    await feed(msg("🛠 Админка", user=ADMIN, payload={"c": "adm:home"}))
+    assert "Админка" in texts_of()[-1]
+    calls.clear()
+    await feed(msg("🛠 Админка", user=STUDENT, payload={"c": "adm:home"}))
+    assert not sends(), "чужому админка по кнопке не открывается"
 
     # 39. не-текст в личке (стикер, фото, голосовое) — бот всё равно отвечает
     calls.clear()

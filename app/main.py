@@ -25,6 +25,29 @@ def _safe_dsn(dsn: str) -> str:
     return tail.split("?", 1)[0]
 
 
+REGISTRY_SYNC = float(os.environ.get("REGISTRY_SYNC_SECONDS", "300"))
+
+
+async def run_registry_sync(ctx: Ctx) -> None:
+    """Список вузов могли поправить прямо в базе — подхватываем без перезапуска."""
+    while True:
+        await asyncio.sleep(REGISTRY_SYNC)
+        try:
+            ctx.registry.apply_rows(await ctx.db.all_universities())
+            await refresh_admins(ctx)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — фоновая задача не должна ронять бота
+            logger.exception("Не смог обновить список вузов")
+
+
+async def refresh_admins(ctx: Ctx) -> None:
+    """Админов задают и адресом страницы — их id узнаём из тех, кто писал боту."""
+    ctx.admin_ids = set(ctx.config.admin_ids) | set(
+        await ctx.db.admin_user_ids(ctx.config.admin_usernames)
+    )
+
+
 async def _handle(ctx: Ctx, update: dict) -> None:
     try:
         await dispatch(ctx, update)
@@ -47,6 +70,8 @@ async def run() -> None:
     api = VkApi(config.vk_token, config.group_id)
     ctx = Ctx(api=api, db=db, registry=registry, config=config)
 
+    await refresh_admins(ctx)
+
     flagged = await db.flag_bursts()
     if flagged:
         logger.warning("Детектор накрутки: помечено %d вступлений из истории", flagged)
@@ -58,6 +83,7 @@ async def run() -> None:
     dialogs: asyncio.Task | None = None
     factory: asyncio.Task | None = None
     watch: asyncio.Task | None = None
+    unis: asyncio.Task | None = None
 
     try:
         await api.setup()
@@ -68,6 +94,7 @@ async def run() -> None:
         factory = asyncio.create_task(run_chat_factory(ctx))
         # беседы, созданные людьми: ждём прав и дооформляем сами
         watch = asyncio.create_task(run_chat_watch(ctx))
+        unis = asyncio.create_task(run_registry_sync(ctx))
         logger.info(
             "Запускаю vk.me/%s (club%d): %d вузов, админов %d (по id: %d, по адресу: %d)",
             api.screen_name, api.group_id, len(registry.items),
@@ -86,7 +113,7 @@ async def run() -> None:
             await asyncio.gather(*(_handle(ctx, update) for update in updates))
             await db.set_setting(TS_SETTING, str(ts))
     finally:
-        for task in (dialogs, factory, watch):
+        for task in (dialogs, factory, watch, unis):
             if task is not None:
                 task.cancel()
         broadcaster.cancel()

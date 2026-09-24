@@ -387,30 +387,40 @@ class VkApi:
 
 
 class Keyboard:
-    """Inline-клавиатура VK. Лимиты у VK жёсткие: 10 кнопок, 6 рядов, подпись до 40 символов."""
+    """Клавиатура VK.
+
+    inline=True — кнопки под конкретным сообщением (10 кнопок, 6 рядов).
+    inline=False — обычная клавиатура: висит под полем ввода, пока её не заменят
+    (40 кнопок, 10 рядов). Такая и нужна для постоянного меню.
+    """
 
     MAX_BUTTONS = 10
     MAX_ROWS = 6
+    MAX_BUTTONS_FIXED = 40
+    MAX_ROWS_FIXED = 10
 
-    def __init__(self) -> None:
+    def __init__(self, inline: bool = True) -> None:
+        self.inline = inline
         self._rows: list[list[dict]] = []
         self._pending: list[dict] = []
 
     @staticmethod
-    def btn(text: str, data: str | None = None, url: str | None = None) -> dict:
+    def btn(text: str, data: str | None = None, url: str | None = None,
+            callback: bool = True) -> dict:
         label = text if len(text) <= 40 else text[:39] + "…"
         if url:
             return {"action": {"type": "open_link", "link": url, "label": label}}
+        # в обычной клавиатуре callback-кнопок нет: она шлёт сообщение с payload
         return {
             "action": {
-                "type": "callback",
+                "type": "callback" if callback else "text",
                 "label": label,
                 "payload": json.dumps({"c": data or "noop"}, ensure_ascii=False),
             }
         }
 
     def button(self, text: str, data: str | None = None, url: str | None = None) -> "Keyboard":
-        self._pending.append(self.btn(text, data, url))
+        self._pending.append(self.btn(text, data, url, callback=self.inline))
         return self
 
     def adjust(self, *sizes: int) -> "Keyboard":
@@ -441,6 +451,11 @@ class Keyboard:
     def as_json(self) -> str:
         rows = self.rows
         count = sum(len(r) for r in rows)
-        if count > self.MAX_BUTTONS or len(rows) > self.MAX_ROWS:
+        max_buttons = self.MAX_BUTTONS if self.inline else self.MAX_BUTTONS_FIXED
+        max_rows = self.MAX_ROWS if self.inline else self.MAX_ROWS_FIXED
+        if count > max_buttons or len(rows) > max_rows:
             raise ValueError(f"VK не примет клавиатуру: {count} кнопок в {len(rows)} рядах")
-        return json.dumps({"inline": True, "buttons": rows}, ensure_ascii=False)
+        markup: dict[str, Any] = {"inline": self.inline, "buttons": rows}
+        if not self.inline:
+            markup["one_time"] = False   # остаётся под полем ввода
+        return json.dumps(markup, ensure_ascii=False)

@@ -57,6 +57,18 @@ def invite_kb(link: str | None, ref_link: str | None, key: str, tickets: bool = 
     return kb
 
 
+def menu_kb(is_admin: bool = False) -> Keyboard:
+    """Постоянное меню под полем ввода: в VK такая клавиатура живёт до замены."""
+    kb = Keyboard(inline=False)
+    kb.button("📋 Вузы", "list")
+    kb.button("📊 Моя статистика", "stats:")
+    kb.button("ℹ️ Как получить билет", "help")
+    if is_admin:
+        kb.button("🛠 Админка", "adm:home")
+    kb.adjust(2)
+    return kb
+
+
 def back_kb() -> Keyboard:
     return Keyboard().button("📋 Список вузов", "list")
 

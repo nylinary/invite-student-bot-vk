@@ -23,6 +23,9 @@ class University:
 
 
 class UniversityRegistry:
+    """Список вузов в памяти. Правки из бота применяются сразу, правки мимо бота —
+    фоновым обновлением (см. run_registry_sync)."""
+
     def __init__(self, items: list[University]):
         self.replace(items)
 

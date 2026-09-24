@@ -123,6 +123,7 @@ class Ctx:
     registry: UniversityRegistry
     config: Config
     forms: dict[int, dict] = field(default_factory=dict)
+    admin_ids: set[int] = field(default_factory=set)   # id админов, включая заданных адресом
 
     def form(self, user_id: int) -> Form:
         return Form(self.forms, user_id)
@@ -132,7 +133,18 @@ class Ctx:
 
     # ───────────── ответы ─────────────
 
+    def _menu(self, peer_id: int):
+        """Постоянное меню — только в личке: в беседах оно всем не нужно."""
+        from app import keyboards as kb
+
+        if is_chat(peer_id):
+            return None
+        return kb.menu_kb(peer_id in self.admin_ids or self.config.is_admin(peer_id))
+
     async def reply(self, peer_id: int, text: str, keyboard=None, attachment: str | None = None) -> None:
+        # у сообщения одна клавиатура: если своих кнопок нет, ставим постоянное меню,
+        # иначе человек остаётся на экране без единого выхода
+        keyboard = keyboard if keyboard is not None else self._menu(peer_id)
         markup = keyboard.as_json() if keyboard is not None else None
         await self.api.send(peer_id, text, markup, attachment)
 

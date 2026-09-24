@@ -119,7 +119,9 @@ async def cmd_bind(ctx: Ctx, message: Message, arg: str) -> None:
         title = ""
     if link:
         await ctx.db.upsert_university(uni.key, uni.title, link, list(uni.aliases))
-        ctx.registry.apply_rows(await ctx.db.all_universities())
+    # список вузов могли поправить мимо бота (прямо в базе) — перечитываем
+    ctx.registry.apply_rows(await ctx.db.all_universities())
+    uni = ctx.registry.get(uni.key) or uni
 
     await ctx.db.bind_chat(uni.key, target, title, message.from_id)
     # беседу мог создать человек: доводим её до вида «как у бота» — ссылка, ава, закреп

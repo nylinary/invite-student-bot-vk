@@ -31,6 +31,13 @@ async def on_message(ctx: Ctx, message: Message) -> None:
         return
 
     message.user = await ctx.api.get_user(message.from_id)
+
+    # нажатие кнопки постоянного меню приходит как обычное сообщение с payload
+    pressed = (message.payload or {}).get("c")
+    if pressed and pressed != "noop":
+        await on_menu_press(ctx, message, pressed)
+        return
+
     command = message.command
 
     # недозаполненная форма организатора: текст — это ответ на неё.
@@ -51,6 +58,23 @@ async def on_message(ctx: Ctx, message: Message) -> None:
     if command and await admin.on_private_command(ctx, message, *command):
         return
     await user.on_message(ctx, message)
+
+
+async def on_menu_press(ctx: Ctx, message: Message, action: str) -> None:
+    """Кнопка постоянного меню: те же экраны, что и по командам."""
+    await user.remember(ctx, message.user)
+    if action.startswith("adm:"):
+        if ctx.is_admin(message.user):
+            await admin.cmd_admin(ctx, message)
+        return
+    if action == "list":
+        await user.cmd_list(ctx, message)
+    elif action.startswith("stats"):
+        await user.cmd_stats(ctx, message)
+    elif action == "help":
+        await user.cmd_help(ctx, message)
+    else:
+        await user.on_message(ctx, message)
 
 
 async def on_callback(ctx: Ctx, cb: Callback) -> None:
