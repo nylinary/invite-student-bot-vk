@@ -136,6 +136,10 @@ async def on_bot_added(ctx: Ctx, peer_id: int, added_by: int) -> None:
 
     await db.bind_chat(uni.key, peer_id, title, added_by)
     logger.info("Беседа %s привязана к вузу %s", peer_id, uni.key)
+
+    from app.chats import decorate_chat
+
+    await decorate_chat(ctx, peer_id, uni)   # ава и закреплённое описание
     await announce_in_chat(ctx, peer_id, uni.key)
 
 

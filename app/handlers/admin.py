@@ -127,9 +127,14 @@ async def cmd_bind(ctx: Ctx, message: Message, arg: str) -> None:
     except VkApiError:
         title = ""
     await ctx.db.bind_chat(uni.key, target, title, message.from_id)
+    # беседу мог создать человек: доводим её до вида «как у бота» — ава и закреп
+    from app.chats import decorate_chat
+
+    extras = await decorate_chat(ctx, target, uni)
     await ctx.reply(
         message.peer_id,
         f"✅ Беседа{'' if message.is_chat else f' {title or target}'} привязана к вузу {uni.title}.\n"
+        f"{extras}\n"
         f"Повторить объяснение для студентов — /announce",
     )
     await announce_in_chat(ctx, target, uni.key)

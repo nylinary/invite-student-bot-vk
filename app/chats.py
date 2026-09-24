@@ -25,7 +25,7 @@ CHAT_TITLE = os.environ.get("CHAT_TITLE", "{title} | НОЧЬ СТУДЕНТА")
 # (ошибка 9) надолго. Поэтому заводим их фоновой очередью — по одной раз в несколько
 # минут, с увеличением паузы на каждый отказ. Очередь переживает перезапуск: что
 # осталось сделать, видно по таблице chats.
-FACTORY_INTERVAL = float(os.environ.get("CHAT_FACTORY_INTERVAL", "180"))
+FACTORY_INTERVAL = float(os.environ.get("CHAT_FACTORY_INTERVAL", "600"))
 FACTORY_MAX_WAIT = float(os.environ.get("CHAT_FACTORY_MAX_WAIT", "3600"))
 FACTORY_ON = "chat_factory"        # включена ли очередь
 FACTORY_BY = "chat_factory_by"     # кого добавлять в создаваемые беседы
@@ -112,6 +112,30 @@ async def create_uni_chat(ctx: Ctx, uni: University, member_id: int | None) -> d
     return {"key": uni.key, "title": title, "peer_id": peer_id, "link": link}
 
 
+async def decorate_chat(ctx: Ctx, peer_id: int, uni: University) -> str:
+    """Ава и закреплённое описание для беседы, которую создал человек, а не бот."""
+    from app import texts
+
+    done = []
+    if await set_avatar(ctx, peer_id, tries=2):
+        done.append("ава поставлена")
+
+    try:
+        items = await ctx.api.send_many(
+            [peer_id], texts.chat_promo(uni.title, ctx.config.organizer, ctx.config.event_url)
+        )
+        cmid = items[0].get("conversation_message_id") if items else None
+        if cmid:
+            await ctx.api.pin(peer_id, int(cmid))
+            done.append("описание закреплено")
+    except (VkApiError, TypeError, ValueError, KeyError, IndexError) as err:
+        logger.warning("Беседа %s: не закрепил описание (%s)", peer_id, err)
+
+    return ("✅ " + ", ".join(done)) if done else (
+        "⚠️ Аву и закреп поставить не смог — проверь, что я администратор беседы."
+    )
+
+
 async def missing_chats(ctx: Ctx) -> list[University]:
     """Вузы, у которых беседы ещё нет."""
     bound = {row["university_key"] for row in await ctx.db.all_chats()}
@@ -137,12 +161,13 @@ async def run_chat_factory(ctx: Ctx) -> None:
     """Фоновая очередь: по одной беседе за подход, с отступлением на флуд-контроль."""
     from app.handlers.tracking import notify_admins
 
+    # отступление живёт между подходами: пока VK держит флуд-контроль, стучаться
+    # чаще бессмысленно — каждая попытка только продлевает запрет
     wait = FACTORY_INTERVAL
     skip: set[str] = set()   # вузы, на которых VK ругается не из-за флуда
 
     while True:
         await asyncio.sleep(wait)
-        wait = FACTORY_INTERVAL
         try:
             if not await factory_running(ctx):
                 continue
@@ -162,11 +187,12 @@ async def run_chat_factory(ctx: Ctx) -> None:
             uni = left[0]
             try:
                 row = await create_uni_chat(ctx, uni, member)
+                wait = FACTORY_INTERVAL      # получилось — снова идём обычным шагом
                 logger.info("Очередь бесед: %s готова (%s), осталось %s",
                             uni.title, row["peer_id"], len(left) - 1)
             except VkApiError as err:
                 if err.code == FLOOD_CONTROL:
-                    wait = min(wait * 3, FACTORY_MAX_WAIT)
+                    wait = min(wait * 2, FACTORY_MAX_WAIT)
                     logger.info("Очередь бесед: флуд-контроль, следующая попытка через %.0f с",
                                 wait)
                 else:
