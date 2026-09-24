@@ -181,6 +181,15 @@ async def notify_admins(ctx: Ctx, text: str) -> None:
         await ctx.safe_send(admin_id, text)
 
 
+async def announce_single(ctx: Ctx, peer_id: int) -> bool:
+    """Пост в общий чат: писать боту, получать свою ссылку, звать друзей."""
+    return await ctx.safe_send(
+        peer_id,
+        texts.chat_welcome_single(ctx.api.dialog_url()),
+        kb.chat_welcome_kb(ctx.api.dialog_url()),
+    )
+
+
 async def announce_in_plain_chat(ctx: Ctx, peer_id: int) -> bool:
     """Беседа без вуза: рассказывать про ссылки вуза незачем, зовём в бота за своей."""
     return await ctx.safe_send(

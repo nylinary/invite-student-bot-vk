@@ -47,7 +47,10 @@ async def cmd_id(ctx: Ctx, message: Message) -> None:
 # ───────────────────────── привязка бесед ─────────────────────────
 
 
-CHAT_ONLY = ("bind", "bindchat", "unbind", "announce")
+CHAT_ONLY = ("bind", "bindchat", "unbind", "announce", "single")
+
+SINGLE_KEY = "common"          # псевдо-вуз, под которым живёт общий чат
+SINGLE_TITLE = "Общий чат"
 
 
 def _target(message: Message, arg: str) -> tuple[int | None, str]:
@@ -214,6 +217,51 @@ async def cmd_bindchat(ctx: Ctx, message: Message, arg: str) -> None:
     )
 
 
+async def cmd_single(ctx: Ctx, message: Message, arg: str = "") -> None:
+    """Временный режим «один чат на всех»: /single <ссылка> в чате, /single off — выключить."""
+    from app.bot import SINGLE_CHAT
+    from app.handlers.tracking import announce_single
+
+    if not await _can_manage(ctx, message):
+        return
+
+    if arg.strip().lower() in ("off", "выкл", "стоп"):
+        await ctx.db.set_setting(SINGLE_CHAT, "")
+        await ctx.reply(message.peer_id, "Вернул обычный режим: студенты снова выбирают вуз.",
+                        None if message.is_chat else kb.admin_back_kb())
+        return
+
+    target, arg = _target(message, arg)
+    if target is None:
+        await _need_chat(ctx, message, "single", "/single <ссылка на чат>")
+        return
+
+    link = arg.strip()
+    if not link.startswith(("http://", "https://", "vk.me/")):
+        link = (ctx.registry.get(SINGLE_KEY).fallback_link
+                if ctx.registry.get(SINGLE_KEY) else "")
+    if not link:
+        await ctx.reply(message.peer_id,
+                        "Нужна ссылка на этот чат — её я без прав администратора не вижу.\n"
+                        "Отправь: /single https://vk.me/join/…")
+        return
+
+    await ctx.db.upsert_university(SINGLE_KEY, SINGLE_TITLE, link, [])
+    ctx.registry.apply_rows(await ctx.db.all_universities())
+    await ctx.db.bind_chat(SINGLE_KEY, target, SINGLE_TITLE, message.from_id)
+    await ctx.db.set_setting(SINGLE_CHAT, SINGLE_KEY)
+
+    await ctx.reply(
+        message.peer_id,
+        "✅ Включил режим одного чата.\n\n"
+        "Теперь бот не спрашивает вуз: любому студенту он сразу даёт этот чат и личную "
+        "ссылку-приглашение, а вступления сюда засчитываются пригласившему.\n"
+        f"Ссылка для студентов: {link}\n\n"
+        "Вернуть вузы — /single off. Привязки вузов остались в базе, ничего не потеряно.",
+    )
+    await announce_single(ctx, target)
+
+
 async def cmd_announce(ctx: Ctx, message: Message, arg: str = "") -> None:
     """Повторно отправить в беседу объяснение для студентов (например, чтобы закрепить)."""
     if not await _can_manage(ctx, message):
@@ -222,6 +270,13 @@ async def cmd_announce(ctx: Ctx, message: Message, arg: str = "") -> None:
     if target is None:
         await _need_chat(ctx, message, "announce", "/announce")
         return
+    from app.bot import SINGLE_CHAT
+    from app.handlers.tracking import announce_single
+
+    if await ctx.db.get_setting(SINGLE_CHAT, ""):
+        await announce_single(ctx, target)
+        return
+
     row = await ctx.db.get_chat_by_id(target)
     if row is not None and is_plain_chat(row["university_key"]):
         await announce_in_plain_chat(ctx, target)
@@ -263,6 +318,8 @@ async def on_chat_command(ctx: Ctx, message: Message) -> None:
         await cmd_bindchat(ctx, message, arg)
     elif name == "announce":
         await cmd_announce(ctx, message, arg)
+    elif name == "single":
+        await cmd_single(ctx, message, arg)
     elif name == "unbind":
         await cmd_unbind(ctx, message, arg)
     elif name == "id":
@@ -721,8 +778,8 @@ async def on_private_command(ctx: Ctx, message: Message, name: str, arg: str) ->
     if not ctx.is_admin(message.user):
         return True  # чужим админку не показываем и не подсказываем, что она есть
     if name in CHAT_ONLY:
-        await {"bind": cmd_bind, "bindchat": cmd_bindchat,
-               "announce": cmd_announce, "unbind": cmd_unbind}[name](ctx, message, arg)
+        await {"bind": cmd_bind, "bindchat": cmd_bindchat, "announce": cmd_announce,
+               "unbind": cmd_unbind, "single": cmd_single}[name](ctx, message, arg)
     elif name == "ticket":
         await cmd_ticket(ctx, message, arg)
     else:

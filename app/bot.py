@@ -13,6 +13,10 @@ from app.vk import VkApi, VkApiError, VkUser, is_chat
 
 logger = logging.getLogger(__name__)
 
+# Временный режим «один чат на всех»: вузы у студентов не спрашиваем, всех зовём
+# в общий чат. Значение — ключ псевдо-вуза, к которому привязан этот чат.
+SINGLE_CHAT = "single_chat"
+
 # «[club123|@party_bot] /bind itmo» — так приходит сообщение с упоминанием бота в беседе
 _MENTION = re.compile(r"^\s*\[(?:club|public)\d+\|[^\]]*\]\s*[,:]?\s*")
 
@@ -127,6 +131,10 @@ class Ctx:
 
     def form(self, user_id: int) -> Form:
         return Form(self.forms, user_id)
+
+    async def single_key(self) -> str | None:
+        """Ключ «вуза», под которым живёт общий чат. Пусто — обычный режим с вузами."""
+        return await self.db.get_setting(SINGLE_CHAT, "") or None
 
     def is_admin(self, user: VkUser | None) -> bool:
         return user is not None and self.config.is_admin(user.id, user.screen_name)

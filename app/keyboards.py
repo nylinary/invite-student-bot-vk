@@ -43,24 +43,27 @@ def suggestions_kb(items: list[University]) -> Keyboard:
     return kb
 
 
-def invite_kb(link: str | None, ref_link: str | None, key: str, tickets: bool = False) -> Keyboard:
+def invite_kb(link: str | None, ref_link: str | None, key: str, tickets: bool = False,
+              single: bool = False) -> Keyboard:
     kb = Keyboard()
     if link:
-        kb.button("✅ Вступить в беседу вуза", url=link)
+        kb.button("✅ Вступить в чат" if single else "✅ Вступить в беседу вуза", url=link)
     if ref_link:
         kb.button("📤 Поделиться ссылкой", url=share_url(ref_link))
     kb.button("📊 Моя статистика", f"stats:{key}")
     if tickets:
         kb.button("🎫 Получить билет", "ticket")
-    kb.button("📋 Другой вуз", "list")
+    if not single:
+        kb.button("📋 Другой вуз", "list")
     kb.adjust(1)
     return kb
 
 
-def menu_kb(is_admin: bool = False) -> Keyboard:
+def menu_kb(is_admin: bool = False, single: bool = False) -> Keyboard:
     """Постоянное меню под полем ввода: в VK такая клавиатура живёт до замены."""
     kb = Keyboard(inline=False)
-    kb.button("📋 Вузы", "list")
+    if not single:            # в режиме одного чата вузы студенту не нужны
+        kb.button("📋 Вузы", "list")
     kb.button("📊 Моя статистика", "stats:")
     kb.button("ℹ️ Как получить билет", "help")
     if is_admin:

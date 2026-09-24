@@ -33,15 +33,20 @@ async def _send_invite(ctx: Ctx, peer_id: int, user: VkUser, key: str,
     await ctx.db.set_user_university(user.id, uni.key)
     result = await get_or_create_invite(ctx.api, ctx.db, user, uni)
 
+    single = (await ctx.single_key()) == uni.key
     if result.link is None:
         text = texts.NO_CHAT_AT_ALL.format(title=uni.title, organizer=ctx.config.organizer)
+    elif single:
+        _, active = await ctx.db.owner_stats(user.id, uni.key)
+        text = texts.invite_single(result.link, result.ref_link, active)
     elif result.personal:
         _, active = await ctx.db.owner_stats(user.id, uni.key)
         text = texts.invite_message(uni.title, result.link, result.ref_link, active)
     else:
         text = texts.fallback_message(uni.title, result.link, ctx.config.organizer)
 
-    markup = kb.invite_kb(result.link, result.ref_link, uni.key, await _tickets_on(ctx))
+    markup = kb.invite_kb(result.link, result.ref_link, uni.key,
+                          await _tickets_on(ctx), single=single)
     if cb is not None:
         await ctx.edit(cb, text, markup)
     else:
@@ -70,8 +75,14 @@ async def _take_ref(ctx: Ctx, message: Message) -> str | None:
 
 
 async def cmd_start(ctx: Ctx, message: Message) -> None:
+    single = await ctx.single_key()
     # постоянное меню ставим с первого же сообщения: дальше оно висит под полем
     # ввода всегда, даже когда у сообщений есть свои кнопки
+    if single:
+        await ctx.reply(message.peer_id, texts.GREETING_SINGLE,
+                        kb.menu_kb(ctx.is_admin(message.user), single=True))
+        await _send_invite(ctx, message.peer_id, message.user, single)
+        return
     await ctx.reply(message.peer_id, texts.GREETING, kb.menu_kb(ctx.is_admin(message.user)))
 
 
@@ -98,6 +109,11 @@ async def cmd_stats(ctx: Ctx, message: Message) -> None:
 
 async def _show_stats(ctx: Ctx, peer_id: int, user: VkUser, key: str | None,
                       cb: Callback | None = None) -> None:
+    single = await ctx.single_key()
+    if single:
+        # в режиме одного чата статистика — это тот же экран с чатом и ссылкой
+        await _send_invite(ctx, peer_id, user, single, cb)
+        return
     if key is None:
         key = await ctx.db.get_user_university(user.id)
 
@@ -136,12 +152,20 @@ async def on_message(ctx: Ctx, message: Message) -> None:
 
     if message.text.strip():
         await on_text(ctx, message)
+    elif await ctx.single_key():
+        await ctx.reply(message.peer_id, texts.ONLY_ONE_CHAT)
     else:
         # стикер, фото, голосовое — молчать нельзя, подсказываем
         await ctx.reply(message.peer_id, texts.ONLY_UNIVERSITY_NAME)
 
 
 async def on_text(ctx: Ctx, message: Message) -> None:
+    single = await ctx.single_key()
+    if single:
+        # вузов не спрашиваем: любой текст — это «дай мне чат и мою ссылку»
+        await _send_invite(ctx, message.peer_id, message.user, single)
+        return
+
     matches = ctx.registry.match(message.text)
 
     if not matches:

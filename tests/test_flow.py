@@ -893,6 +893,44 @@ async def main() -> None:
     await feed(msg("🛠 Админка", user=STUDENT, payload={"c": "adm:home"}))
     assert not sends(), "чужому админка по кнопке не открывается"
 
+    # 38в. временный режим «один чат на всех»
+    calls.clear()
+    common_chat = CHAT_PEER_OFFSET + 71
+    TITLES[common_chat] = "НОЧЬ СТУДЕНТОВ | общий чат"
+    NO_ADMIN.add(common_chat)                      # прав у бота нет, ссылку даёт организатор
+    await feed(msg("/single https://vk.me/join/OBSHIY", user=ADMIN, peer=common_chat))
+    assert "режим одного чата" in texts_of()[-2], texts_of()[-2:]
+    assert any("Пишите боту" in t for t in texts_of()), "в чат не ушёл пост"
+    assert (await db.get_chat_by_id(common_chat))["university_key"] == "common"
+
+    # студент: вуз не спрашивают, сразу чат и личная ссылка
+    calls.clear()
+    await feed(msg("Начать", user=1201, payload={"command": "start"}))
+    invite = texts_of()[-1]
+    assert "https://vk.me/join/OBSHIY" in invite and "ref=r1201_common" in invite, invite
+    assert "вуз" not in invite.lower(), invite
+    menu = json.loads(sends(1201)[0]["keyboard"])
+    assert "📋 Вузы" not in [b["action"]["label"] for row in menu["buttons"] for b in row]
+
+    # друг по ссылке получает тот же чат, вступление засчитано
+    calls.clear()
+    await feed(msg("Начать", user=1202, ref="r1201_common", payload={"command": "start"}))
+    assert "https://vk.me/join/OBSHIY" in texts_of()[-1]
+    await feed(action(common_chat, "chat_invite_user_by_link", 1202))
+    assert await db.owner_stats(1201, "common") == (1, 1)
+    assert "Засчитано приглашённых: 1" in sends(1201)[-1]["message"]
+
+    # любой текст в режиме одного чата — это «дай ссылку», а не поиск вуза
+    calls.clear()
+    await feed(msg("привет", user=1201))
+    assert "ref=r1201_common" in texts_of()[-1]
+
+    await feed(msg("/single off", user=ADMIN))     # возвращаем вузы
+    calls.clear()
+    await feed(msg("итмо", user=STUDENT))
+    assert "ИТМО" in texts_of()[-1] or "итмо" in texts_of()[-1].lower()
+    NO_ADMIN.discard(common_chat)
+
     # 39. не-текст в личке (стикер, фото, голосовое) — бот всё равно отвечает
     calls.clear()
     await feed(msg("", attachments=[{"type": "sticker", "sticker": {}}]))
