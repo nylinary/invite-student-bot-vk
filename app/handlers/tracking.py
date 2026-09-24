@@ -106,6 +106,13 @@ async def on_bot_added(ctx: Ctx, peer_id: int, added_by: int) -> None:
         title = ""
 
     matches = registry.match(title) if title else []
+    if not title:
+        # без прав администратора VK не отдаёт даже название беседы — запомним
+        # и разберёмся, когда права появятся (этим занят досмотр бесед)
+        await db.add_pending_chat(peer_id, added_by)
+        logger.info("Добавили в беседу %s — названия не видно, жду прав", peer_id)
+        return
+
     if len(matches) != 1:
         # Чужая беседа: бота могли добавить куда угодно, в том числе по ошибке.
         # Молча сидим и ничего не пишем — вдруг это беседа под другую задачу.
@@ -113,6 +120,7 @@ async def on_bot_added(ctx: Ctx, peer_id: int, added_by: int) -> None:
                     peer_id, title)
         # В саму беседу не пишем (вдруг она вообще не наша), но организатор должен узнать:
         # иначе беседа тихо останется без привязки и без персональных ссылок.
+        await db.add_pending_chat(peer_id, added_by)
         keys = ", ".join(u.key for u in registry.items[:6])
         await notify_admins(
             ctx,

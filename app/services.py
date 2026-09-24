@@ -47,8 +47,13 @@ async def get_or_create_invite(
         # ссылку не кэшируем: админ беседы может её сбросить, а запрос дешёвый
         chat_link = await api.invite_link(chat["chat_id"])
     except VkApiError as err:
-        logger.warning("Не удалось получить ссылку беседы %s (%s): %s", uni.key, chat["chat_id"], err)
-        return InviteResult(uni.fallback_link, personal=False)
+        # Прав администратора у бота может не быть — VK их сообществам в чужих беседах
+        # не даёт. Тогда берём ссылку, которую организатор положил в карточку вуза:
+        # вступления всё равно считаются, бот же сидит в беседе и видит события.
+        logger.debug("Ссылку беседы %s взял из карточки вуза (%s)", uni.key, err)
+        chat_link = uni.fallback_link
+        if not chat_link:
+            return InviteResult(None, personal=False)
 
     existing = await db.get_invite_link(user.id, uni.key)
     ref_link = api.dialog_url(ref_payload(user.id, uni.key))

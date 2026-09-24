@@ -97,6 +97,13 @@ async def cmd_bind(ctx: Ctx, message: Message, arg: str) -> None:
         await _need_chat(ctx, message, "bind", f"/bind {arg}")
         return
 
+    # ссылку-приглашение можно передать прямо в команде: без прав админа
+    # бот сам её у VK не возьмёт, а студентам она нужна
+    link = ""
+    parts = arg.split()
+    if parts and parts[-1].startswith(("http://", "https://", "vk.me/")):
+        link, arg = parts[-1], " ".join(parts[:-1]).strip()
+
     uni = registry.get(arg)
     if uni is None:
         matches = registry.match(arg)
@@ -110,6 +117,10 @@ async def cmd_bind(ctx: Ctx, message: Message, arg: str) -> None:
         title = await ctx.api.chat_title(target) or ""
     except VkApiError:
         title = ""
+    if link:
+        await ctx.db.upsert_university(uni.key, uni.title, link, list(uni.aliases))
+        ctx.registry.apply_rows(await ctx.db.all_universities())
+
     await ctx.db.bind_chat(uni.key, target, title, message.from_id)
     # беседу мог создать человек: доводим её до вида «как у бота» — ссылка, ава, закреп
     from app.chats import finish_chat
@@ -122,12 +133,21 @@ async def cmd_bind(ctx: Ctx, message: Message, arg: str) -> None:
             f"Ава и описание на месте, ссылка-приглашение у студентов.\n"
             f"Повторить объяснение для студентов — /announce",
         )
+    elif ctx.registry.get(uni.key).fallback_link:
+        await ctx.reply(
+            message.peer_id,
+            f"✅ Беседа{where} привязана к вузу {uni.title}.\n"
+            f"Прав администратора у меня нет, поэтому ссылку-приглашение беру ту, "
+            f"что ты дал: {ctx.registry.get(uni.key).fallback_link}\n"
+            f"Рассылки сюда пойдут, вступления буду считать по личным ссылкам студентов.",
+        )
     else:
         await ctx.reply(
             message.peer_id,
-            f"✅ Беседа{where} привязана к вузу {uni.title}, но я ещё не администратор.\n"
-            f"Назначь меня админом беседы — дальше я сам поставлю аву, закреплю описание "
-            f"и начну выдавать ссылки. Проверять будет фоновая задача, команды не нужны.",
+            f"✅ Беседа{where} привязана к вузу {uni.title}, но ссылки-приглашения у меня нет: "
+            f"без прав администратора VK её не отдаёт.\n"
+            f"Пришли команду со ссылкой — /bind {uni.key} https://vk.me/join/… — "
+            f"или вставь ссылку в админке: «🎓 Список вузов» → {uni.title} → «🔗 Ссылка».",
         )
 
 

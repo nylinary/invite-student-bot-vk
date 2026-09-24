@@ -89,6 +89,8 @@ class FakeVk(VkApi):
             return {"chat_id": _chat_seq, "peer_ids": []}
         if method == "messages.getConversationsById":
             peer = params["peer_ids"]
+            if peer in NO_ADMIN:
+                return {"count": 0, "items": []}
             title = TITLES.get(peer, "Беседа без понятного названия")
             return {"count": 1, "items": [{"peer": {"id": peer}, "chat_settings": {"title": title}}]}
         if method == "messages.getConversationMembers":
@@ -368,18 +370,16 @@ async def main() -> None:
     assert (await db.get_chat("leti"))["chat_id"] == known
     assert "Система наград" in texts_of()[-1]
 
-    # бота добавили, но админом ещё не сделали: беседу привязываем, права просим
+    # бота добавили, но админом ещё не сделали: беседа ждёт прав в pending_chats
     calls.clear()
     rights = CHAT_PEER_OFFSET + 66
     TITLES[rights] = "Горный — беседа"
     NO_ADMIN.add(rights)
     await feed(action(rights, "chat_invite_user", -GROUP_ID, by=ADMIN))
-    gorny = registry.match("Горный")[0].key
-    assert "администратором" in sends(rights)[-1]["message"]
-    bound_rights = await db.get_chat_by_id(rights)
-    assert bound_rights["university_key"] == gorny and not bound_rights["ready"]
-    await db.unbind_chat(gorny)     # дальше сценарии рассчитывают на прежний состав
+    assert rights in {r["chat_id"] for r in await db.pending_chats()}
+    assert await db.get_chat_by_id(rights) is None
     NO_ADMIN.discard(rights)
+    await db.drop_pending_chat(rights)   # дальше сценарии рассчитывают на прежний состав
 
     # 15. вступление в ещё не привязанную беседу, а потом /bind -> вуз проставится задним числом
     late = CHAT_PEER_OFFSET + 55
@@ -537,31 +537,43 @@ async def main() -> None:
     assert any(m == "messages.setChatPhoto" for m, _ in calls), "беседам не поставили аву"
     assert any("Беседы вузов готовы" in t for t in texts_of()), "нет отчёта админам"
 
-    # 20д. беседу создал человек: бот привязывает сразу, а дооформляет, когда дадут права
+    # 20е. бота добавили без прав: названия не видно, ждём админку и опознаём потом
     calls.clear()
-    hand = CHAT_PEER_OFFSET + 51
-    TITLES[hand] = "Военмех | НОЧЬ СТУДЕНТА"   # вуз, который дальше в сценариях не участвует
-    NO_ADMIN.add(hand)
-    await feed(action(hand, "chat_invite_user", -GROUP_ID, by=ADMIN))
-    bound_hand = await db.get_chat_by_id(hand)
-    assert bound_hand and bound_hand["university_key"] == "voenmeh", bound_hand
-    assert not bound_hand["ready"]
-    assert "назначить меня администратором" in sends(hand)[-1]["message"].lower()
+    blind = CHAT_PEER_OFFSET + 52
+    TITLES[blind] = "Техноложка | НОЧЬ СТУДЕНТА"
+    NO_ADMIN.add(blind)          # без прав VK не отдаёт даже название
+    await feed(action(blind, "chat_invite_user", -GROUP_ID, by=ADMIN))
+    assert blind in {r["chat_id"] for r in await db.pending_chats()}
+    assert await db.get_chat_by_id(blind) is None
+    assert not sends(blind), "в беседу без прав писать не о чем"
 
-    NO_ADMIN.discard(hand)          # куратор выдал права
+    NO_ADMIN.discard(blind)      # куратор выдал права
     calls.clear()
     import app.chats as chats_mod
-    chats_mod.WATCH_INTERVAL = 0.01
-    chats_mod.WATCH_PAUSE = 0.0
-    watch = asyncio.create_task(chats_mod.run_chat_watch(ctx))
-    await asyncio.sleep(0.6)
-    watch.cancel()
+    await chats_mod.identify_pending(ctx)
+    bound_blind = await db.get_chat_by_id(blind)
+    assert bound_blind and bound_blind["university_key"] == "tehnologichka", bound_blind
+    assert bound_blind["ready"]
+    assert blind not in {r["chat_id"] for r in await db.pending_chats()}
+    assert any("готова" in t for t in texts_of()), texts_of()[-3:]
 
-    assert (await db.get_chat_by_id(hand))["ready"], "беседу не дооформили"
-    assert registry.get("voenmeh").fallback_link.startswith("https://vk.me/join/")
-    in_chat = [p["message"] for p in sends(hand)]
-    assert any("Бесплатные билеты" in t for t in in_chat) and any("Система наград" in t for t in in_chat)
-    assert any("готова" in t for t in texts_of()), "админам не сообщили"
+    # 20ж. беседа без прав администратора: привязываем со ссылкой из команды
+    calls.clear()
+    manual = CHAT_PEER_OFFSET + 53
+    NO_ADMIN.add(manual)
+    await feed(msg(f"/bind spbgu https://vk.me/join/HANDMADE {manual}".replace(
+        f" {manual}", ""), user=ADMIN, peer=manual))
+    bound_manual = await db.get_chat_by_id(manual)
+    assert bound_manual and bound_manual["university_key"] == "spbgu", bound_manual
+    assert registry.get("spbgu").fallback_link == "https://vk.me/join/HANDMADE"
+    assert "привязана" in texts_of()[-1] and "vk.me/join/HANDMADE" in texts_of()[-1]
+
+    # студент получает эту ссылку и свою личную — считаем как обычно
+    calls.clear()
+    await feed(msg("СПбГУ", user=FRIEND))
+    invite = texts_of()[-1]
+    assert "https://vk.me/join/HANDMADE" in invite and "ref=r1002_spbgu" in invite, invite
+    NO_ADMIN.discard(manual)
 
     # 21. проверка привязок
     calls.clear()

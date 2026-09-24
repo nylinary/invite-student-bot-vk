@@ -103,6 +103,15 @@ CREATE INDEX IF NOT EXISTS idx_broadcasts_due ON broadcasts(status, scheduled_at
 ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS target_ids BIGINT[];
 ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS sent_offset INTEGER NOT NULL DEFAULT 0;
 
+-- Беседы, куда бота добавили, но вуз ещё не опознан: без прав администратора
+-- VK не отдаёт даже название. Ждём прав и разбираемся позже.
+CREATE TABLE IF NOT EXISTS pending_chats (
+    chat_id  BIGINT PRIMARY KEY,
+    added_by BIGINT,
+    seen_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    notified BOOLEAN NOT NULL DEFAULT FALSE
+);
+
 -- Беседа доведена до готовности: есть права, ава, закреп и ссылка-приглашение.
 -- Беседу мог создать человек и выдать права не сразу — тогда бот дооформит её позже.
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS ready BOOLEAN NOT NULL DEFAULT FALSE;
@@ -308,6 +317,24 @@ class Database:
 
     async def all_chats(self) -> list[asyncpg.Record]:
         return await self.pool.fetch("SELECT * FROM chats ORDER BY university_key")
+
+    async def add_pending_chat(self, chat_id: int, added_by: int) -> None:
+        await self.pool.execute(
+            "INSERT INTO pending_chats (chat_id, added_by) VALUES ($1, $2) "
+            "ON CONFLICT (chat_id) DO NOTHING",
+            chat_id, added_by,
+        )
+
+    async def pending_chats(self) -> list[asyncpg.Record]:
+        return await self.pool.fetch("SELECT * FROM pending_chats ORDER BY chat_id")
+
+    async def drop_pending_chat(self, chat_id: int) -> None:
+        await self.pool.execute("DELETE FROM pending_chats WHERE chat_id = $1", chat_id)
+
+    async def mark_pending_notified(self, chat_id: int) -> None:
+        await self.pool.execute(
+            "UPDATE pending_chats SET notified = TRUE WHERE chat_id = $1", chat_id
+        )
 
     async def unready_chats(self) -> list[asyncpg.Record]:
         """Беседы вузов, которые ещё не дооформлены (обычно ждут прав администратора)."""

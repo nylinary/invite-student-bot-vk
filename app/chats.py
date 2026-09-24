@@ -160,6 +160,43 @@ async def finish_chat(ctx: Ctx, peer_id: int, uni: University) -> bool:
     return True
 
 
+async def identify_pending(ctx: Ctx) -> None:
+    """Беседы, где бот сидит без прав: как только их выдали — узнаём вуз и привязываем."""
+    from app.handlers.tracking import notify_admins
+
+    for row in await ctx.db.pending_chats():
+        peer_id = row["chat_id"]
+        try:
+            title = await ctx.api.chat_title(peer_id)
+        except VkApiError:
+            continue          # прав всё ещё нет, ждём дальше
+        if not title:
+            continue
+
+        matches = ctx.registry.match(title)
+        if len(matches) != 1:
+            if not row["notified"]:
+                await ctx.db.mark_pending_notified(peer_id)
+                await notify_admins(
+                    ctx,
+                    f"🤔 Беседа «{title}» (id {peer_id}): по названию вуз не понял.\n"
+                    f"Привязать вручную: /bind {peer_id} <ключ> "
+                    f"или /bindchat {peer_id} <название> для беседы без вуза.",
+                )
+            continue
+
+        uni = matches[0]
+        await ctx.db.bind_chat(uni.key, peer_id, title, row["added_by"] or 0)
+        await ctx.db.drop_pending_chat(peer_id)
+        logger.info("Беседа %s опознана как %s", peer_id, uni.key)
+        if await finish_chat(ctx, peer_id, uni):
+            await notify_admins(
+                ctx, f"✅ Беседа «{title}» готова: вуз {uni.title}, ава и описание на месте, "
+                     f"ссылка у студентов.",
+            )
+        await asyncio.sleep(WATCH_PAUSE)
+
+
 async def run_chat_watch(ctx: Ctx) -> None:
     """Ждёт, пока беседам выдадут права, и дооформляет их без участия человека."""
     from app.handlers.tracking import notify_admins
@@ -167,6 +204,7 @@ async def run_chat_watch(ctx: Ctx) -> None:
     while True:
         await asyncio.sleep(WATCH_INTERVAL)
         try:
+            await identify_pending(ctx)
             for row in await ctx.db.unready_chats():
                 uni = ctx.registry.get(row["university_key"])
                 if uni is None:
