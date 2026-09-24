@@ -899,8 +899,12 @@ async def main() -> None:
     TITLES[common_chat] = "НОЧЬ СТУДЕНТОВ | общий чат"
     NO_ADMIN.add(common_chat)                      # прав у бота нет, ссылку даёт организатор
     await feed(msg("/single https://vk.me/join/OBSHIY", user=ADMIN, peer=common_chat))
-    assert "режим одного чата" in texts_of()[-2], texts_of()[-2:]
-    assert any("Пишите боту" in t for t in texts_of()), "в чат не ушёл пост"
+    assert "режим одного чата" in texts_of()[-1], texts_of()[-1]
+    assert not any("Пишите боту" in t for t in texts_of()), "пост не должен дублироваться"
+    # пост публикуется только по /announce
+    calls.clear()
+    await feed(msg("/announce", user=ADMIN, peer=common_chat))
+    assert any("Пишите боту" in t for t in texts_of()), texts_of()
     assert (await db.get_chat_by_id(common_chat))["university_key"] == "common"
 
     # студент: вуз не спрашивают, сразу чат и личная ссылка

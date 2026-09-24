@@ -220,7 +220,6 @@ async def cmd_bindchat(ctx: Ctx, message: Message, arg: str) -> None:
 async def cmd_single(ctx: Ctx, message: Message, arg: str = "") -> None:
     """Временный режим «один чат на всех»: /single <ссылка> в чате, /single off — выключить."""
     from app.bot import SINGLE_CHAT
-    from app.handlers.tracking import announce_single
 
     if not await _can_manage(ctx, message):
         return
@@ -257,9 +256,9 @@ async def cmd_single(ctx: Ctx, message: Message, arg: str = "") -> None:
         "Теперь бот не спрашивает вуз: любому студенту он сразу даёт этот чат и личную "
         "ссылку-приглашение, а вступления сюда засчитываются пригласившему.\n"
         f"Ссылка для студентов: {link}\n\n"
+        "Пост в чат не отправлял — если нужен, отправь /announce\n"
         "Вернуть вузы — /single off. Привязки вузов остались в базе, ничего не потеряно.",
     )
-    await announce_single(ctx, target)
 
 
 async def cmd_announce(ctx: Ctx, message: Message, arg: str = "") -> None:
