@@ -107,37 +107,28 @@ async def cmd_bind(ctx: Ctx, message: Message, arg: str) -> None:
         uni = matches[0]
 
     try:
-        await ctx.api.invite_link(target)
-    except VkApiError:
-        await ctx.reply(
-            message.peer_id,
-            "Сначала назначьте меня администратором беседы — без этого VK не отдаёт "
-            "ссылку-приглашение, а она нужна студентам.\n\n"
-            "Если пункта «Назначить администратором» нет, это может сделать только "
-            "создатель беседы. Совсем без прав вуз тоже можно подключить: возьми "
-            "ссылку-приглашение беседы вручную и вставь её в админке "
-            "(«🎓 Список вузов» → вуз → «🔗 Ссылка») — тогда бот будет отдавать её "
-            "студентам, но вступления по ней не засчитываются.",
-            None if message.is_chat else kb.admin_back_kb(),
-        )
-        return
-
-    try:
         title = await ctx.api.chat_title(target) or ""
     except VkApiError:
         title = ""
     await ctx.db.bind_chat(uni.key, target, title, message.from_id)
-    # беседу мог создать человек: доводим её до вида «как у бота» — ава и закреп
-    from app.chats import decorate_chat
+    # беседу мог создать человек: доводим её до вида «как у бота» — ссылка, ава, закреп
+    from app.chats import finish_chat
 
-    extras = await decorate_chat(ctx, target, uni)
-    await ctx.reply(
-        message.peer_id,
-        f"✅ Беседа{'' if message.is_chat else f' {title or target}'} привязана к вузу {uni.title}.\n"
-        f"{extras}\n"
-        f"Повторить объяснение для студентов — /announce",
-    )
-    await announce_in_chat(ctx, target, uni.key)
+    where = "" if message.is_chat else f" {title or target}"
+    if await finish_chat(ctx, target, uni):
+        await ctx.reply(
+            message.peer_id,
+            f"✅ Беседа{where} привязана к вузу {uni.title}.\n"
+            f"Ава и описание на месте, ссылка-приглашение у студентов.\n"
+            f"Повторить объяснение для студентов — /announce",
+        )
+    else:
+        await ctx.reply(
+            message.peer_id,
+            f"✅ Беседа{where} привязана к вузу {uni.title}, но я ещё не администратор.\n"
+            f"Назначь меня админом беседы — дальше я сам поставлю аву, закреплю описание "
+            f"и начну выдавать ссылки. Проверять будет фоновая задача, команды не нужны.",
+        )
 
 
 CHAT_PREFIX = "chat:"

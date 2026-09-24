@@ -127,20 +127,16 @@ async def on_bot_added(ctx: Ctx, peer_id: int, added_by: int) -> None:
         return
 
     uni = matches[0]
-    try:
-        await ctx.api.invite_link(peer_id)
-    except VkApiError:
-        # в VK бота добавляют обычным участником, админом его делают отдельно
-        await ctx.safe_send(peer_id, texts.no_invite_rights(uni.key))
-        return
+    # Привязываем сразу: в VK бота добавляют обычным участником, а админом делают
+    # отдельно. Ждать команду человека незачем — как только права появятся,
+    # фоновый досмотр сам дооформит беседу.
+    from app.chats import finish_chat
 
     await db.bind_chat(uni.key, peer_id, title, added_by)
     logger.info("Беседа %s привязана к вузу %s", peer_id, uni.key)
 
-    from app.chats import decorate_chat
-
-    await decorate_chat(ctx, peer_id, uni)   # ава и закреплённое описание
-    await announce_in_chat(ctx, peer_id, uni.key)
+    if not await finish_chat(ctx, peer_id, uni):
+        await ctx.safe_send(peer_id, texts.no_rights_yet(uni.title))
 
 
 async def on_bot_removed(ctx: Ctx, peer_id: int) -> None:

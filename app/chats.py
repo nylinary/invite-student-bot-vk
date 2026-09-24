@@ -27,6 +27,8 @@ CHAT_TITLE = os.environ.get("CHAT_TITLE", "{title} | НОЧЬ СТУДЕНТА")
 # осталось сделать, видно по таблице chats.
 FACTORY_INTERVAL = float(os.environ.get("CHAT_FACTORY_INTERVAL", "600"))
 FACTORY_MAX_WAIT = float(os.environ.get("CHAT_FACTORY_MAX_WAIT", "3600"))
+WATCH_INTERVAL = float(os.environ.get("CHAT_WATCH_INTERVAL", "120"))
+WATCH_PAUSE = 1.0     # между беседами в одном заходе
 FACTORY_ON = "chat_factory"        # включена ли очередь
 FACTORY_BY = "chat_factory_by"     # кого добавлять в создаваемые беседы
 
@@ -103,6 +105,7 @@ async def create_uni_chat(ctx: Ctx, uni: University, member_id: int | None) -> d
 
     link = await ctx.api.invite_link(peer_id)
     await ctx.db.bind_chat(uni.key, peer_id, title, member_id or 0)
+    await ctx.db.mark_chat_ready(peer_id)
     # ссылку кладём и в карточку вуза: пригодится как запасная и видна организатору
     await ctx.db.upsert_university(uni.key, uni.title, link, list(uni.aliases))
     ctx.registry.apply_rows(await ctx.db.all_universities())
@@ -134,6 +137,51 @@ async def decorate_chat(ctx: Ctx, peer_id: int, uni: University) -> str:
     return ("✅ " + ", ".join(done)) if done else (
         "⚠️ Аву и закреп поставить не смог — проверь, что я администратор беседы."
     )
+
+
+async def finish_chat(ctx: Ctx, peer_id: int, uni: University) -> bool:
+    """Доводит беседу до готовности: ссылка, ава, закреп, объяснение студентам.
+
+    Возвращает False, если бот ещё не администратор — тогда попробуем позже.
+    """
+    from app.handlers.tracking import announce_in_chat
+
+    try:
+        link = await ctx.api.invite_link(peer_id)
+    except VkApiError:
+        return False
+
+    await ctx.db.upsert_university(uni.key, uni.title, link, list(uni.aliases))
+    ctx.registry.apply_rows(await ctx.db.all_universities())
+    await decorate_chat(ctx, peer_id, uni)
+    await announce_in_chat(ctx, peer_id, uni.key)
+    await ctx.db.mark_chat_ready(peer_id)
+    logger.info("Беседа %s (%s) дооформлена: %s", peer_id, uni.key, link)
+    return True
+
+
+async def run_chat_watch(ctx: Ctx) -> None:
+    """Ждёт, пока беседам выдадут права, и дооформляет их без участия человека."""
+    from app.handlers.tracking import notify_admins
+
+    while True:
+        await asyncio.sleep(WATCH_INTERVAL)
+        try:
+            for row in await ctx.db.unready_chats():
+                uni = ctx.registry.get(row["university_key"])
+                if uni is None:
+                    continue
+                if await finish_chat(ctx, row["chat_id"], uni):
+                    await notify_admins(
+                        ctx,
+                        f"✅ Беседа «{row['title'] or uni.title}» готова: права есть, "
+                        f"ава и описание на месте, ссылка у студентов.",
+                    )
+                await asyncio.sleep(WATCH_PAUSE)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — фоновая задача не должна ронять бота
+            logger.exception("Досмотр бесед сорвался, продолжаю")
 
 
 async def missing_chats(ctx: Ctx) -> list[University]:

@@ -103,6 +103,10 @@ CREATE INDEX IF NOT EXISTS idx_broadcasts_due ON broadcasts(status, scheduled_at
 ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS target_ids BIGINT[];
 ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS sent_offset INTEGER NOT NULL DEFAULT 0;
 
+-- Беседа доведена до готовности: есть права, ава, закреп и ссылка-приглашение.
+-- Беседу мог создать человек и выдать права не сразу — тогда бот дооформит её позже.
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS ready BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Откуда человек взялся: 'bot' — писал боту сам, 'import' — подтянут из диалогов
 -- сообщества (ему можно писать, но личную ссылку он ещё не брал).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'bot';
@@ -276,7 +280,9 @@ class Database:
                         chat_id = EXCLUDED.chat_id,
                         title = EXCLUDED.title,
                         bound_by = EXCLUDED.bound_by,
-                        bound_at = now()
+                        bound_at = now(),
+                        -- вуз переехал в другую беседу: её ещё предстоит дооформить
+                        ready = (chats.chat_id = EXCLUDED.chat_id AND chats.ready)
                     """,
                     key, chat_id, title, bound_by,
                 )
@@ -302,6 +308,16 @@ class Database:
 
     async def all_chats(self) -> list[asyncpg.Record]:
         return await self.pool.fetch("SELECT * FROM chats ORDER BY university_key")
+
+    async def unready_chats(self) -> list[asyncpg.Record]:
+        """Беседы вузов, которые ещё не дооформлены (обычно ждут прав администратора)."""
+        return await self.pool.fetch(
+            "SELECT * FROM chats WHERE NOT ready AND university_key NOT LIKE 'chat:%' "
+            "ORDER BY bound_at"
+        )
+
+    async def mark_chat_ready(self, chat_id: int) -> None:
+        await self.pool.execute("UPDATE chats SET ready = TRUE WHERE chat_id = $1", chat_id)
 
     async def free_chat_key(self, base: str) -> str:
         """Ключ для беседы без вуза: chat:obshchiy, chat:obshchiy2 и так далее."""

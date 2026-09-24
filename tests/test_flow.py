@@ -262,11 +262,13 @@ async def main() -> None:
     assert (await db.get_chat("itmo"))["chat_id"] == GROUP
     assert (await db.get_chat("itmo"))["title"] == "ИТМО | беседа"
     bind_msgs = texts_of()
-    assert "привязана" in bind_msgs[-2]
+    assert any("привязана" in t for t in bind_msgs), bind_msgs
     # в беседу вуза улетает объяснение для студентов с кнопкой в бота
-    assert "Система наград" in bind_msgs[-1] and "vk.me/party_bot" in bind_msgs[-1]
-    links = [a["link"] for a in buttons(sends(GROUP)[-1]) if a["type"] == "open_link"]
-    assert links == ["https://vk.me/party_bot?ref=uni_itmo"], links
+    chat_msgs = [p["message"] for p in sends(GROUP)]
+    assert any("Система наград" in t and "vk.me/party_bot" in t for t in chat_msgs)
+    assert any("Бесплатные билеты" in t for t in chat_msgs), "нет закреплённого описания"
+    links = [a["link"] for p in sends(GROUP) for a in buttons(p) if a["type"] == "open_link"]
+    assert "https://vk.me/party_bot?ref=uni_itmo" in links, links
 
     # 4. теперь тот же студент получает беседу и ПЕРСОНАЛЬНУЮ ссылку
     calls.clear()
@@ -366,15 +368,17 @@ async def main() -> None:
     assert (await db.get_chat("leti"))["chat_id"] == known
     assert "Система наград" in texts_of()[-1]
 
-    # бота добавили, но админом ещё не сделали — просим права и подсказываем ключ
+    # бота добавили, но админом ещё не сделали: беседу привязываем, права просим
     calls.clear()
     rights = CHAT_PEER_OFFSET + 66
     TITLES[rights] = "Горный — беседа"
     NO_ADMIN.add(rights)
     await feed(action(rights, "chat_invite_user", -GROUP_ID, by=ADMIN))
     gorny = registry.match("Горный")[0].key
-    assert f"/bind {gorny}" in sends(rights)[-1]["message"]
-    assert await db.get_chat_by_id(rights) is None
+    assert "администратором" in sends(rights)[-1]["message"]
+    bound_rights = await db.get_chat_by_id(rights)
+    assert bound_rights["university_key"] == gorny and not bound_rights["ready"]
+    await db.unbind_chat(gorny)     # дальше сценарии рассчитывают на прежний состав
     NO_ADMIN.discard(rights)
 
     # 15. вступление в ещё не привязанную беседу, а потом /bind -> вуз проставится задним числом
@@ -533,6 +537,32 @@ async def main() -> None:
     assert any(m == "messages.setChatPhoto" for m, _ in calls), "беседам не поставили аву"
     assert any("Беседы вузов готовы" in t for t in texts_of()), "нет отчёта админам"
 
+    # 20д. беседу создал человек: бот привязывает сразу, а дооформляет, когда дадут права
+    calls.clear()
+    hand = CHAT_PEER_OFFSET + 51
+    TITLES[hand] = "Военмех | НОЧЬ СТУДЕНТА"   # вуз, который дальше в сценариях не участвует
+    NO_ADMIN.add(hand)
+    await feed(action(hand, "chat_invite_user", -GROUP_ID, by=ADMIN))
+    bound_hand = await db.get_chat_by_id(hand)
+    assert bound_hand and bound_hand["university_key"] == "voenmeh", bound_hand
+    assert not bound_hand["ready"]
+    assert "назначить меня администратором" in sends(hand)[-1]["message"].lower()
+
+    NO_ADMIN.discard(hand)          # куратор выдал права
+    calls.clear()
+    import app.chats as chats_mod
+    chats_mod.WATCH_INTERVAL = 0.01
+    chats_mod.WATCH_PAUSE = 0.0
+    watch = asyncio.create_task(chats_mod.run_chat_watch(ctx))
+    await asyncio.sleep(0.6)
+    watch.cancel()
+
+    assert (await db.get_chat_by_id(hand))["ready"], "беседу не дооформили"
+    assert registry.get("voenmeh").fallback_link.startswith("https://vk.me/join/")
+    in_chat = [p["message"] for p in sends(hand)]
+    assert any("Бесплатные билеты" in t for t in in_chat) and any("Система наград" in t for t in in_chat)
+    assert any("готова" in t for t in texts_of()), "админам не сообщили"
+
     # 21. проверка привязок
     calls.clear()
     await feed(press("adm:check"))
@@ -640,7 +670,7 @@ async def main() -> None:
     assert row["photo_id"] == f"photo-{GROUP_ID}_88_k"
     await asyncio.sleep(0.4)  # даём фоновой задаче доставить
     delivered = [p["peer_id"] for p in sends() if p.get("attachment")]
-    assert {GROUP, known, late, common} <= set(delivered), delivered
+    assert set(delivered) == {c["chat_id"] for c in await db.all_chats()}, delivered
 
     # 30. отложенная рассылка пользователям с фильтром — и её отмена
     calls.clear()
