@@ -230,4 +230,4 @@ async def cb_ticket(ctx: Ctx, cb: Callback) -> None:
         cb.peer_id, texts.ticket(code, name, perks, active, ctx.registry.title(key), holder),
         kb.student_kb(key),
     )
-    await ctx.answer(cb)
+    await ctx.answer(cb, "Билет у тебя 🎫")

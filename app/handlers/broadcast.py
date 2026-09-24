@@ -375,7 +375,7 @@ async def _confirm_screen(ctx: Ctx, user_id: int) -> tuple[str, Keyboard]:
 
 
 async def _go(ctx: Ctx, cb: Callback) -> None:
-    await ctx.answer(cb)   # если сюда пришли не из меню — всё равно снимаем «часики»
+    await ctx.answer(cb, "Принял")   # если сюда пришли не из меню — всё равно отвечаем сразу
     form = ctx.form(cb.user_id)
     data = form.data
     raw = data.get("scheduled_at")
@@ -451,7 +451,7 @@ async def _import(ctx: Ctx, cb: Callback) -> None:
     Диалогов бывает под сотню тысяч, и VK отдаёт их минутами — поэтому читаем в фоне,
     а админ сразу получает ответ и может дальше пользоваться ботом.
     """
-    await ctx.answer(cb)
+    await ctx.answer(cb, "Запустил импорт")
     await ctx.edit(
         cb,
         "📥 Читаю диалоги сообщества…\n\n"
@@ -517,11 +517,11 @@ async def on_callback(ctx: Ctx, cb: Callback) -> None:
 
     # подтверждаем нажатие сразу: иначе у админа крутится загрузка, пока мы считаем
     if data == "bc:cancel":
-        await ctx.answer(cb)
+        await ctx.answer(cb, "Отменил")
     elif data.startswith("bc:x:"):
-        await ctx.answer(cb)
+        await ctx.answer(cb, "Отменяю…")
     elif data == "bc:go":
-        await ctx.answer(cb)
+        await ctx.answer(cb, "Принял")
     elif data != "bc:import":  # там свой текст в снекбаре
         await ctx.answer(cb)
 

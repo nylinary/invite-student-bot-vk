@@ -736,10 +736,11 @@ async def on_callback(ctx: Ctx, cb: Callback) -> None:
     ctx.form(cb.user_id).clear()
 
     section = cb.data.split(":", 1)[1]
-    # эти экраны считаются долго (опрос VK по каждой беседе) — снимаем «часики» сразу.
-    # Без текста: VK показывает его всплывашкой в углу, и на каждый клик это мельтешит.
-    if section in ("home", "unis", "check", "csv"):
-        await ctx.answer(cb)
+    # эти экраны считаются долго (опрос VK по каждой беседе) — снимаем «часики» сразу
+    await ctx.answer(cb, {
+        "home": "Считаю…", "unis": "Считаю…",
+        "check": "Проверяю беседы…", "csv": "Готовлю файл…",
+    }.get(section))
 
     if section == "mkchats":
         await cmd_makechats(ctx, Message(peer_id=cb.peer_id, from_id=cb.user_id, user=cb.user))
@@ -750,7 +751,7 @@ async def on_callback(ctx: Ctx, cb: Callback) -> None:
 
         if section == "mkchats_stop":
             await stop_factory(ctx)
-            await ctx.answer(cb)
+            await ctx.answer(cb, "Остановил")
         else:
             left = await start_factory(ctx, cb.user_id)
             await ctx.answer(cb, f"Запустил: {left} бесед")
@@ -770,7 +771,7 @@ async def on_callback(ctx: Ctx, cb: Callback) -> None:
     if section == "tickets_toggle":
         enabled = await db.get_setting("tickets", "0") == "1"
         await db.set_setting("tickets", "0" if enabled else "1")
-        await ctx.answer(cb)
+        await ctx.answer(cb, "Выключил" if enabled else "Включил, кнопка у студентов есть")
         enabled = not enabled
         await ctx.edit(cb, await _tickets_text(db), kb.tickets_kb(enabled))
         return

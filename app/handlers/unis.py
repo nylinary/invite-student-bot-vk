@@ -196,7 +196,7 @@ async def on_callback(ctx: Ctx, cb: Callback) -> None:
     elif data.startswith("un:delok:"):
         await ctx.db.delete_university(data.split(":", 2)[2])
         await _reload(ctx)
-        await ctx.answer(cb)
+        await ctx.answer(cb, "Удалил")
         await ctx.edit(cb, *_list_screen(registry, 0))
         return
     elif data.startswith("un:del:"):

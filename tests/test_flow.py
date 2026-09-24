@@ -577,6 +577,22 @@ async def main() -> None:
     assert "https://vk.me/join/HANDMADE" in invite and "ref=r1002_spbgu" in invite, invite
     NO_ADMIN.discard(manual)
 
+    # 20з. рядовой участник не может перебить привязку чужой беседы
+    calls.clear()
+    NO_ADMIN.add(manual)                     # прав у бота нет — админов беседы не проверить
+    await feed(msg("/bind itmo", user=STUDENT, peer=manual))
+    assert not sends(), "посторонний смог отправить /bind"
+    assert (await db.get_chat_by_id(manual))["university_key"] == "spbgu"
+    # и «отвязать» тоже нельзя
+    await feed(msg("/unbind", user=STUDENT, peer=manual))
+    assert await db.get_chat_by_id(manual) is not None
+    NO_ADMIN.discard(manual)
+
+    # а админ беседы (там, где бот админ и может это проверить) — может
+    calls.clear()
+    await feed(msg("/announce", user=CURATOR, peer=GROUP))
+    assert any("Система наград" in t for t in texts_of()), "куратор беседы не смог"
+
     # 21. проверка привязок
     calls.clear()
     NO_ADMIN.add(manual)        # у беседы СПбГУ прав нет, но ссылка задана руками
@@ -947,8 +963,7 @@ async def main() -> None:
     order = [m for m, _ in calls]
     # нажатие подтверждено сразу, отправка ещё даже не началась
     assert "messages.sendMessageEventAnswer" in order and "messages.send" not in order, order
-    # без текста: всплывашки VK на каждый клик только мешают
-    assert not snackbars(), snackbars()
+    assert snackbars()[-1] == "Принял"
     await asyncio.sleep(1.0)
     big = await db.pool.fetchrow("SELECT * FROM broadcasts ORDER BY id DESC LIMIT 1")
     assert big["status"] == "done" and big["sent"] == total, dict(big)
