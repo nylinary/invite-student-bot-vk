@@ -412,9 +412,9 @@ async def main() -> None:
         assert shown and expect in shown[-1], (section, shown)
         if section == "unis":
             assert "👥 136" in shown[-1], shown[-1]  # участники беседы ИТМО из VK
-            assert "ИТОГО" in shown[-1] and "Всего в беседах вузов" in shown[-1]
+            assert "ИТОГО" in shown[-1] and "Всего в чатах" in shown[-1]
             # итог по колонке «в беседе» = 136 (ИТМО) + 42 + 42 (ЛЭТИ и ГУАП из мока)
-            assert "Всего в беседах вузов: 220" in shown[-1], shown[-1]
+            assert "Всего в чатах: 220" in shown[-1], shown[-1]
 
     # 17. чужой в админку по кнопке не попадёт
     calls.clear()
@@ -919,6 +919,16 @@ async def main() -> None:
     await feed(action(common_chat, "chat_invite_user_by_link", 1202))
     assert await db.owner_stats(1201, "common") == (1, 1)
     assert "Засчитано приглашённых: 1" in sends(1201)[-1]["message"]
+
+    # админка тоже говорит про один чат, а не про 43 вуза
+    calls.clear()
+    await feed(msg("/admin", user=ADMIN))
+    home = texts_of()[-1]
+    assert "Режим одного чата" in home and "Бот админ в беседах вузов" not in home, home
+    calls.clear()
+    await feed(press("adm:unis"))
+    unis_screen = texts_of("messages.edit")[-1]
+    assert "Общий чат" in unis_screen and "Бот не админ в беседе" not in unis_screen, unis_screen
 
     # любой текст в режиме одного чата — это «дай ссылку», а не поиск вуза
     calls.clear()

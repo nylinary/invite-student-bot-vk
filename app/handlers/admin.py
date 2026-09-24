@@ -330,6 +330,9 @@ async def on_chat_command(ctx: Ctx, message: Message) -> None:
 
 
 async def _home_text(api: VkApi, db: Database, registry: UniversityRegistry) -> str:
+    from app.bot import SINGLE_CHAT
+
+    single = await db.get_setting(SINGLE_CHAT, "")
     people = await db.count_by_source()
     links = await db.count_links()
     total, active = await db.totals()
@@ -355,14 +358,23 @@ async def _home_text(api: VkApi, db: Database, registry: UniversityRegistry) -> 
         f"🎫 Заработали билет (от {MIN_INVITED} приглашённых): {earned_total}",
         f"🚨 Отсеяно накрутки: {sum(r['flagged'] for r in stats)}",
         f"👥 Сейчас в беседах вузов: {sum(members)}",
-        f"💬 Бот админ в беседах вузов: {len(unis)} из {len(registry.items)}",
-        *([f"💬 Беседы без вуза: {len(plain)} (в них {plain_members} чел.)"] if plain else []),
+        *([
+            "",
+            "Режим одного чата: вузы у студентов не спрашиваем.",
+            f"💬 В общем чате: {counts.get(single) or '—'} чел.",
+        ] if single else [
+            f"💬 Бот админ в беседах вузов: {len(unis)} из {len(registry.items)}",
+            *([f"💬 Беседы без вуза: {len(plain)} (в них {plain_members} чел.)"] if plain else []),
+        ]),
         "",
         "Выбери, что показать:",
     ])
 
 
 async def _universities_text(api: VkApi, db: Database, registry: UniversityRegistry) -> str:
+    from app.bot import SINGLE_CHAT
+
+    single = await db.get_setting(SINGLE_CHAT, "")
     stats = {row["university_key"]: row for row in await db.full_stats()}
     chat_rows = await db.all_chats()
     chats = {c["university_key"] for c in chat_rows}
@@ -373,9 +385,11 @@ async def _universities_text(api: VkApi, db: Database, registry: UniversityRegis
     keys = [u.key for u in registry.items if u.key in stats or u.key in chats]
     keys.sort(key=lambda k: (stats[k]["total"] if k in stats else 0, members.get(k) or 0), reverse=True)
 
+    if single:
+        keys = [single]
     lines = [
-        "📊 По вузам",
-        "🔗 ссылок выдано · 🚪 вступило всего · 🎯 по реферальным · 👥 сейчас в беседе",
+        "📊 Общий чат" if single else "📊 По вузам",
+        "🔗 ссылок выдано · 🚪 вступило всего · 🎯 по реферальным · 👥 сейчас в чате",
         "",
     ]
 
@@ -405,13 +419,13 @@ async def _universities_text(api: VkApi, db: Database, registry: UniversityRegis
         "",
         f"ИТОГО — 🔗 {sum_links} · 🚪 {sum_total} · 🎯 {sum_invited} · 👥 {sum_members}",
         "",
-        f"👥 Всего в беседах вузов: {sum_members}",
+        f"👥 Всего в чатах: {sum_members}",
         f"🔗 Выдано личных ссылок: {sum_links}",
         f"🚪 Вступило всего: {sum_total}, из них по реферальным: {sum_invited}",
         f"🚨 Отсеяно накрутки: {sum(r['flagged'] for r in stats.values())} (в 🎯 не входит)",
     ]
 
-    unbound = [u.title for u in registry.items if u.key not in chats]
+    unbound = [] if single else [u.title for u in registry.items if u.key not in chats]
     if unbound:
         lines += [
             "",
