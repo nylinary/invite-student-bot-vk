@@ -426,28 +426,31 @@ async def _member_counts(api: VkApi, chats: list) -> dict[str, int | None]:
 
 
 async def _selfcheck_text(api: VkApi, db: Database, registry: UniversityRegistry) -> str:
-    """Сверяем каждую привязку с реальностью: та ли это беседа и админ ли там бот.
+    """Сверяем каждую привязку с реальностью: есть ли чем звать студентов и та ли это беседа.
 
-    Ровно та проверка, которая ловит «нажал РАНХиГС, попал в беседу ГЛТУ»:
-    если беседа привязана не к тому вузу, здесь это видно сразу.
+    Прав администратора у бота может не быть (VK не даёт их сообществам в чужих
+    беседах) — это не поломка: ссылку тогда задаёт организатор, и она видна здесь же.
+    Настоящая беда — когда ссылки нет вовсе или беседа привязана не к тому вузу.
     """
     chats = await db.all_chats()
     if not chats:
         return "🔍 Проверка привязок\n\nПривязанных бесед пока нет."
 
     problems: list[str] = []
+    manual: list[str] = []
     checked = 0
     for row in chats:
         plain = is_plain_chat(row["university_key"])
+        uni = None if plain else registry.get(row["university_key"])
         expected = row["title"] or "Общая беседа" if plain else registry.title(row["university_key"])
+        checked += 1
+
         try:
             title = await api.chat_title(row["chat_id"])
-        except VkApiError as err:
-            problems.append(f"❌ {expected}: беседа недоступна ({err.message})")
-            continue
+        except VkApiError:
+            title = None      # без прав VK названия не отдаёт — это нормально
 
-        checked += 1
-        guess = [] if plain else registry.match(title or "")
+        guess = registry.match(title or "") if (title and not plain) else []
         if len(guess) == 1 and guess[0].key != row["university_key"]:
             problems.append(
                 f"⚠️ {expected}: беседа называется «{title}» — "
@@ -455,17 +458,32 @@ async def _selfcheck_text(api: VkApi, db: Database, registry: UniversityRegistry
             )
 
         if plain:
-            continue  # беседе без вуза права администратора не нужны: там только рассылки
+            continue  # беседе без вуза ни прав, ни ссылки не нужно: там только рассылки
+
         try:
             await api.invite_link(row["chat_id"])
         except VkApiError:
-            problems.append(f"❌ {expected}: бот больше не админ — ссылку в беседу не выдать")
+            # прав нет — значит студентам уходит ссылка из карточки вуза
+            if uni is not None and uni.fallback_link:
+                manual.append(expected)
+            else:
+                problems.append(
+                    f"❌ {expected}: ссылки для студентов нет. Отправь в беседе "
+                    f"/bind {row['university_key']} <ссылка на беседу>"
+                )
 
-    lines = ["🔍 Проверка привязок", "", f"Проверено бесед: {checked} из {len(chats)}"]
+    lines = ["🔍 Проверка привязок", "", f"Проверено бесед: {checked}"]
     if problems:
         lines += ["", *problems]
     else:
-        lines += ["", "✅ Все беседы на месте, названия совпадают с вузами, права у бота есть."]
+        lines += ["", "✅ Все беседы на месте: у каждого вуза есть ссылка для студентов."]
+    if manual:
+        lines += [
+            "",
+            f"ℹ️ Без прав администратора ({len(manual)}): " + ", ".join(manual),
+            "Это нормально — VK не даёт сообществам админку в чужих беседах. "
+            "Ссылку студентам выдаю ту, что задал организатор; вступления считаются.",
+        ]
     return "\n".join(lines)
 
 
@@ -718,11 +736,10 @@ async def on_callback(ctx: Ctx, cb: Callback) -> None:
     ctx.form(cb.user_id).clear()
 
     section = cb.data.split(":", 1)[1]
-    # эти экраны считаются долго (опрос VK по каждой беседе) — снимаем «часики» сразу
-    await ctx.answer(cb, {
-        "home": "Считаю…", "unis": "Считаю…",
-        "check": "Проверяю беседы…", "csv": "Готовлю файл…",
-    }.get(section))
+    # эти экраны считаются долго (опрос VK по каждой беседе) — снимаем «часики» сразу.
+    # Без текста: VK показывает его всплывашкой в углу, и на каждый клик это мельтешит.
+    if section in ("home", "unis", "check", "csv"):
+        await ctx.answer(cb)
 
     if section == "mkchats":
         await cmd_makechats(ctx, Message(peer_id=cb.peer_id, from_id=cb.user_id, user=cb.user))
@@ -733,7 +750,7 @@ async def on_callback(ctx: Ctx, cb: Callback) -> None:
 
         if section == "mkchats_stop":
             await stop_factory(ctx)
-            await ctx.answer(cb, "Остановил")
+            await ctx.answer(cb)
         else:
             left = await start_factory(ctx, cb.user_id)
             await ctx.answer(cb, f"Запустил: {left} бесед")
@@ -753,7 +770,7 @@ async def on_callback(ctx: Ctx, cb: Callback) -> None:
     if section == "tickets_toggle":
         enabled = await db.get_setting("tickets", "0") == "1"
         await db.set_setting("tickets", "0" if enabled else "1")
-        await ctx.answer(cb, "Выключил" if enabled else "Включил, кнопка у студентов есть")
+        await ctx.answer(cb)
         enabled = not enabled
         await ctx.edit(cb, await _tickets_text(db), kb.tickets_kb(enabled))
         return
@@ -805,12 +822,12 @@ async def on_callback(ctx: Ctx, cb: Callback) -> None:
         return
 
     if section == "check":
-        await ctx.answer(cb, "Проверяю беседы…")
+        await ctx.answer(cb)
         await ctx.edit(cb, await _selfcheck_text(ctx.api, db, registry), kb.admin_back_kb())
         return
 
     if section == "unis":
-        await ctx.answer(cb, "Считаю…")
+        await ctx.answer(cb)
         await ctx.edit(cb, await _universities_text(ctx.api, db, registry), kb.admin_back_kb())
         return
 

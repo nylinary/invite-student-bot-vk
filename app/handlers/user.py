@@ -27,8 +27,7 @@ async def _send_invite(ctx: Ctx, peer_id: int, user: VkUser, key: str,
                        cb: Callback | None = None) -> None:
     uni = ctx.registry.get(key)
     if uni is None:
-        await ctx.reply(peer_id, texts.NOT_FOUND.format(organizer=ctx.config.organizer),
-                        kb.back_kb())
+        await ctx.reply(peer_id, texts.NOT_FOUND.format(organizer=ctx.config.organizer))
         return
 
     await ctx.db.set_user_university(user.id, uni.key)
@@ -71,7 +70,9 @@ async def _take_ref(ctx: Ctx, message: Message) -> str | None:
 
 
 async def cmd_start(ctx: Ctx, message: Message) -> None:
-    await ctx.reply(message.peer_id, texts.GREETING, kb.greeting_kb(ctx.is_admin(message.user)))
+    # постоянное меню ставим с первого же сообщения: дальше оно висит под полем
+    # ввода всегда, даже когда у сообщений есть свои кнопки
+    await ctx.reply(message.peer_id, texts.GREETING, kb.menu_kb(ctx.is_admin(message.user)))
 
 
 async def cmd_help(ctx: Ctx, message: Message) -> None:
@@ -137,15 +138,14 @@ async def on_message(ctx: Ctx, message: Message) -> None:
         await on_text(ctx, message)
     else:
         # стикер, фото, голосовое — молчать нельзя, подсказываем
-        await ctx.reply(message.peer_id, texts.ONLY_UNIVERSITY_NAME, kb.back_kb())
+        await ctx.reply(message.peer_id, texts.ONLY_UNIVERSITY_NAME)
 
 
 async def on_text(ctx: Ctx, message: Message) -> None:
     matches = ctx.registry.match(message.text)
 
     if not matches:
-        await ctx.reply(message.peer_id, texts.NOT_FOUND.format(organizer=ctx.config.organizer),
-                        kb.back_kb())
+        await ctx.reply(message.peer_id, texts.NOT_FOUND.format(organizer=ctx.config.organizer))
         return
 
     if len(matches) == 1:
@@ -230,4 +230,4 @@ async def cb_ticket(ctx: Ctx, cb: Callback) -> None:
         cb.peer_id, texts.ticket(code, name, perks, active, ctx.registry.title(key), holder),
         kb.student_kb(key),
     )
-    await ctx.answer(cb, "Билет у тебя 🎫")
+    await ctx.answer(cb)
