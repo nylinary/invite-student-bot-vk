@@ -962,6 +962,18 @@ async def main() -> None:
     unis_screen = texts_of("messages.edit")[-1]
     assert "Общий чат" in unis_screen and "Бот не админ в беседе" not in unis_screen, unis_screen
 
+    # помощь и /list в режиме одного чата не заикаются про вузы
+    calls.clear()
+    await feed(msg("/help", user=1201))
+    help_text = texts_of()[-1]
+    assert "вуз" not in help_text.lower(), help_text
+    assert "напиши мне что угодно" in help_text.lower(), help_text
+    assert not pressed(sends(1201)[-1], "list"), "осталась кнопка со списком вузов"
+
+    calls.clear()
+    await feed(msg("/list", user=1201))
+    assert "ref=r1201_common" in texts_of()[-1], texts_of()[-1]
+
     # «Моя статистика» в режиме одного чата показывает цифры, а не то же приглашение
     calls.clear()
     await feed(press("stats:", user=1201))

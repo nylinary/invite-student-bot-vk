@@ -125,9 +125,11 @@ async def cmd_start(ctx: Ctx, message: Message) -> None:
 
 
 async def cmd_help(ctx: Ctx, message: Message) -> None:
-    key = await ctx.db.get_user_university(message.from_id)
-    await ctx.reply(message.peer_id, texts.HELP.format(organizer=ctx.config.organizer),
-                    kb.student_kb(key, await _tickets_on(ctx)))
+    single = await ctx.single_key()
+    key = single or await ctx.db.get_user_university(message.from_id)
+    text = (texts.HELP_SINGLE if single else texts.HELP).format(organizer=ctx.config.organizer)
+    await ctx.reply(message.peer_id, text,
+                    kb.student_kb(key, await _tickets_on(ctx), single=bool(single)))
 
 
 def _list_title(ctx: Ctx, page: int) -> str:
@@ -137,6 +139,11 @@ def _list_title(ctx: Ctx, page: int) -> str:
 
 
 async def cmd_list(ctx: Ctx, message: Message) -> None:
+    single = await ctx.single_key()
+    if single:
+        # вузы спрятаны: показывать список не из чего, сразу отдаём чат и ссылку
+        await _send_invite(ctx, message.peer_id, message.user, single)
+        return
     await ctx.reply(message.peer_id, _list_title(ctx, 0),
                     kb.universities_kb(ctx.registry.items, 0, ctx.is_admin(message.user)))
 
@@ -271,8 +278,9 @@ async def cb_ticket(ctx: Ctx, cb: Callback) -> None:
 
     if not await _tickets_on(ctx):
         await ctx.answer(cb)
+        single = await ctx.single_key()
         await ctx.reply(cb.peer_id, texts.TICKETS_OFF, kb.student_kb(
-            await ctx.db.get_user_university(user.id)))
+            single or await ctx.db.get_user_university(user.id), single=bool(single)))
         return
 
     key = await ctx.db.get_user_university(user.id)
@@ -282,7 +290,7 @@ async def cb_ticket(ctx: Ctx, cb: Callback) -> None:
 
     if earned is None:
         await ctx.reply(cb.peer_id, texts.ticket_progress(active, with_links),
-                        kb.student_kb(key, tickets=True))
+                        kb.student_kb(key, tickets=True, single=bool(await ctx.single_key())))
         await ctx.answer(cb)
         return
 

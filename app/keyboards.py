@@ -76,14 +76,16 @@ def back_kb() -> Keyboard:
     return Keyboard().button("📋 Список вузов", "list")
 
 
-def student_kb(key: str | None = None, tickets: bool = False) -> Keyboard:
+def student_kb(key: str | None = None, tickets: bool = False,
+               single: bool = False) -> Keyboard:
     """Куда уйти с любого экрана студента: свой вуз, статистика, список."""
     kb = Keyboard()
     if key:
         kb.button("📊 Моя статистика", f"stats:{key}")
     if tickets:
         kb.button("🎫 Получить билет", "ticket")
-    kb.button("📋 Список вузов", "list")
+    if not single:          # в режиме одного чата выбирать не из чего
+        kb.button("📋 Список вузов", "list")
     kb.adjust(1)
     return kb
 
