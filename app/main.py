@@ -10,6 +10,7 @@ from app.db import Database
 from app.handlers import dispatch
 from app.chats import run_chat_factory, run_chat_watch
 from app.importer import run_dialog_sync
+from app.members import run_members_sync
 from app.universities import UniversityRegistry
 from app.vk import VkApi
 
@@ -84,6 +85,7 @@ async def run() -> None:
     factory: asyncio.Task | None = None
     watch: asyncio.Task | None = None
     unis: asyncio.Task | None = None
+    members: asyncio.Task | None = None
 
     try:
         await api.setup()
@@ -95,6 +97,8 @@ async def run() -> None:
         # беседы, созданные людьми: ждём прав и дооформляем сами
         watch = asyncio.create_task(run_chat_watch(ctx))
         unis = asyncio.create_task(run_registry_sync(ctx))
+        # состав чатов сверяем сами: служебных сообщений о вступлениях VK может не слать
+        members = asyncio.create_task(run_members_sync(ctx))
         logger.info(
             "Запускаю vk.me/%s (club%d): %d вузов, админов %d (по id: %d, по адресу: %d)",
             api.screen_name, api.group_id, len(registry.items),
@@ -113,7 +117,7 @@ async def run() -> None:
             await asyncio.gather(*(_handle(ctx, update) for update in updates))
             await db.set_setting(TS_SETTING, str(ts))
     finally:
-        for task in (dialogs, factory, watch, unis):
+        for task in (dialogs, factory, watch, unis, members):
             if task is not None:
                 task.cancel()
         broadcaster.cancel()

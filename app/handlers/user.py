@@ -4,7 +4,7 @@ import logging
 
 from app import keyboards as kb
 from app import texts
-from app.bot import Callback, Ctx, Message
+from app.bot import COUNT_ON_REF, Callback, Ctx, Message
 from app.services import get_or_create_invite, parse_ref
 from app.tickets import tier_for, ticket_code
 from app.vk import VkUser
@@ -71,7 +71,45 @@ async def _take_ref(ctx: Ctx, message: Message) -> str | None:
     if link is not None and owner_id != message.from_id:
         await ctx.db.save_referral(message.from_id, owner_id, key, link["link"])
         logger.info("ref user=%s owner=%s uni=%s", message.from_id, owner_id, key)
+        await _count_ref(ctx, message.user, owner_id, key, link["link"])
     return key
+
+
+async def _count_ref(ctx: Ctx, user: VkUser, owner_id: int, key: str, link: str) -> None:
+    """Засчитать приглашённого по переходу в бота.
+
+    Нужно для чатов, где бот не администратор: VK не присылает ему вступления по
+    ссылке, поэтому ждать их бессмысленно. Запись идёт в ту же таблицу, что и
+    настоящие вступления, — если человек потом действительно вступит, строка
+    просто обновится и второй раз никого не засчитает.
+    """
+    if await ctx.db.get_setting(COUNT_ON_REF, "") != "1":
+        return
+    chat = await ctx.db.get_chat(key)
+    if chat is None:
+        return
+
+    await ctx.db.record_join(
+        chat_id=chat["chat_id"], user_id=user.id, username=user.username,
+        full_name=user.full_name, university_key=key, link=link, owner_id=owner_id,
+    )
+    logger.info("засчитано по ссылке: %s -> %s (%s)", user.id, owner_id, key)
+
+    # та же защита от накрутки, что и на вступлениях
+    had_flags = await ctx.db.flagged_count(owner_id) > 0
+    if await ctx.db.flag_bursts(owner_id) and not had_flags:
+        from app.handlers.tracking import _alert_fraud
+
+        await _alert_fraud(ctx, owner_id, ctx.registry.title(key))
+    if await ctx.db.is_suspicious(chat["chat_id"], user.id):
+        return
+
+    _, active = await ctx.db.owner_stats(owner_id, key)
+    await ctx.safe_send(
+        owner_id,
+        f"🎉 По твоей ссылке пришёл(ла) {texts.who(user.id, user.username, user.full_name)}.\n"
+        f"Засчитано приглашённых: {active}",
+    )
 
 
 async def cmd_start(ctx: Ctx, message: Message) -> None:
@@ -111,18 +149,22 @@ async def _show_stats(ctx: Ctx, peer_id: int, user: VkUser, key: str | None,
                       cb: Callback | None = None) -> None:
     single = await ctx.single_key()
     if single:
-        # в режиме одного чата статистика — это тот же экран с чатом и ссылкой
-        await _send_invite(ctx, peer_id, user, single, cb)
-        return
-    if key is None:
+        key = single
+    elif key is None:
         key = await ctx.db.get_user_university(user.id)
 
     total, active = await ctx.db.owner_stats(user.id, key)
     flagged = await ctx.db.flagged_count(user.id, key)
     link_row = await ctx.db.get_invite_link(user.id, key) if key else None
     ref_link = link_row["link"] if link_row else None
-    text = texts.stats_message(ctx.registry.title(key), ref_link, total, active, flagged)
-    markup = kb.invite_kb(None, ref_link, key or "", await _tickets_on(ctx))
+    uni = ctx.registry.get(key or "")
+    # в режиме одного чата вуза у человека нет, зато полезно видеть сам чат
+    text = texts.stats_message(None if single else ctx.registry.title(key),
+                               ref_link, total, active, flagged)
+    if single and uni is not None and uni.fallback_link:
+        text += f"\n\n💬 Чат мероприятия:\n{uni.fallback_link}"
+    markup = kb.invite_kb(uni.fallback_link if single else None, ref_link, key or "",
+                          await _tickets_on(ctx), single=bool(single))
     if cb is not None:
         await ctx.edit(cb, text, markup)
     else:

@@ -412,6 +412,20 @@ async def _go(ctx: Ctx, cb: Callback) -> None:
 # ───────────────────────── запланированные ─────────────────────────
 
 
+def _progress(row) -> str:
+    """Сколько уже ушло и сколько осталось ждать — иначе отправка выглядит зависшей."""
+    total = len(row["target_ids"] or [])
+    done = row["sent_offset"] or 0
+    if not total:
+        return "идёт, список получателей собирается"
+
+    spent = (datetime.now(MSK) - row["created_at"].astimezone(MSK)).total_seconds()
+    speed = done / spent if spent > 0 and done else 0
+    left = f", осталось ~{max(1, round((total - done) / speed / 60))} мин" if speed else ""
+    return (f"идёт: {done} из {total}{left}\n"
+            f"    доставлено {row['sent']}, не дошло {row['failed']}")
+
+
 async def _list(ctx: Ctx, cb: Callback) -> None:
     # кнопок у VK максимум 10: девять «отменить» и «назад»
     pending = (await ctx.db.pending_broadcasts())[:Keyboard.MAX_BUTTONS - 1]
@@ -423,9 +437,12 @@ async def _list(ctx: Ctx, cb: Callback) -> None:
         lines = ["🗂 Запланированные", ""]
         for row in pending:
             where = "беседы" if row["kind"] == "chats" else "пользователи"
-            lines.append(
-                f"#{row['id']} · {row['scheduled_at'].astimezone(MSK):%d.%m %H:%M} МСК · {where}"
-            )
+            if row["status"] == "sending":
+                lines.append(f"#{row['id']} · {where} · {_progress(row)}")
+            else:
+                lines.append(
+                    f"#{row['id']} · {row['scheduled_at'].astimezone(MSK):%d.%m %H:%M} МСК · {where}"
+                )
             kb.button(f"❌ Отменить #{row['id']}", f"bc:x:{row['id']}")
 
     recent = await ctx.db.recent_broadcasts(5)

@@ -27,6 +27,9 @@ async def on_action(ctx: Ctx, message: Message) -> None:
     action = message.action or {}
     kind = action.get("type")
     member_id = action.get("member_id") or message.from_id
+    # видно каждое служебное событие: без этого не понять, доходят ли вступления
+    logger.info("action %s: чат=%s member=%s from=%s",
+                kind, message.peer_id, action.get("member_id"), message.from_id)
 
     if kind in JOIN_ACTIONS:
         if member_id == -ctx.api.group_id:

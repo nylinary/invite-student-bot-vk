@@ -39,6 +39,7 @@ DIALOGS = (
        {"id": STUDENT, "type": "user", "allowed": True}]
 )
 NO_ADMIN: set[int] = set()  # беседы, где бот не администратор
+MEMBERS: dict[int, set[int]] = {}   # реальный состав бесед для сверки
 # что VK ответит по конкретному адресату: {peer_id: код ошибки}
 SEND_ERRORS: dict[int, int] = {}
 
@@ -97,6 +98,10 @@ class FakeVk(VkApi):
             peer = params["peer_id"]
             if peer in NO_ADMIN:
                 raise VkApiError(917, "You don't have access to this chat", method)
+            if peer in MEMBERS:          # состав задан сценарием — отдаём его
+                items = [{"member_id": uid} for uid in sorted(MEMBERS[peer])]
+                items.append({"member_id": -GROUP_ID, "is_admin": True})
+                return {"count": len(items), "items": items}
             humans = 136 if peer == GROUP else 42
             items = [{"member_id": 50_000 + i} for i in range(humans - 1)]
             items.append({"member_id": CURATOR, "is_admin": True})
@@ -762,6 +767,7 @@ async def main() -> None:
     assert [r["id"] for r in await db.due_broadcasts()] == [bid]
 
     from app.broadcaster import deliver as deliver_now
+    assert await db.take_broadcast(bid)        # так же, как это делает отправщик
     await deliver_now(api, db, registry, await db.pool.fetchrow(
         "SELECT * FROM broadcasts WHERE id = $1", bid))
 
@@ -769,6 +775,28 @@ async def main() -> None:
     assert got == ids[30:], f"ушло {len(got)} вместо 20"
     done = await db.pool.fetchrow("SELECT * FROM broadcasts WHERE id = $1", bid)
     assert done["status"] == "done" and done["sent"] == 48 and done["failed"] == 2
+
+    # 32б. отмена во время отправки останавливает рассылку, а не игнорируется
+    import app.broadcaster as bc
+    calls.clear()
+    ids2 = [7500 + i for i in range(300)]
+    bid2 = await db.create_broadcast("users", "Длинная", None, None, "all",
+                                     dt.datetime.now(dt.timezone.utc), ADMIN)
+    await db.save_broadcast_targets(bid2, ids2)
+    await db.take_broadcast(bid2)
+
+    async def cancel_soon():
+        await asyncio.sleep(0.05)
+        assert await db.cancel_broadcast(bid2), "идущую рассылку не дали отменить"
+
+    asyncio.create_task(cancel_soon())
+    await bc.deliver(api, db, registry, await db.pool.fetchrow(
+        "SELECT * FROM broadcasts WHERE id = $1", bid2))
+
+    stopped = await db.pool.fetchrow("SELECT * FROM broadcasts WHERE id = $1", bid2)
+    assert stopped["status"] == "canceled", dict(stopped)
+    assert stopped["sent"] < len(ids2), "рассылка доехала до конца, хотя её отменили"
+    assert any("остановлена" in p["message"] for p in sends(ADMIN)), sends(ADMIN)[-1]
 
     # 33. кастомный диапазон приглашённых реально фильтрует
     everyone = await db.audience_user_ids("all")
@@ -934,6 +962,14 @@ async def main() -> None:
     unis_screen = texts_of("messages.edit")[-1]
     assert "Общий чат" in unis_screen and "Бот не админ в беседе" not in unis_screen, unis_screen
 
+    # «Моя статистика» в режиме одного чата показывает цифры, а не то же приглашение
+    calls.clear()
+    await feed(press("stats:", user=1201))
+    stats_screen = texts_of("messages.edit")[-1]
+    assert "Твоя статистика" in stats_screen and "Засчитано приглашённых: 1" in stats_screen
+    assert "https://vk.me/join/OBSHIY" in stats_screen, stats_screen
+    assert "Вуз:" not in stats_screen, stats_screen
+
     # любой текст в режиме одного чата — это «дай ссылку», а не поиск вуза
     calls.clear()
     await feed(msg("привет", user=1201))
@@ -944,6 +980,45 @@ async def main() -> None:
     await feed(msg("итмо", user=STUDENT))
     assert "ИТМО" in texts_of()[-1] or "итмо" in texts_of()[-1].lower()
     NO_ADMIN.discard(common_chat)
+
+    # 38д. новый аккаунт VK ID: огромный id — это человек, а не беседа
+    calls.clear()
+    vkid = 200004394945           # так выглядят id новых аккаунтов
+    PEOPLE[vkid] = ("Н Асм М", f"id{vkid}")
+    await feed(msg("Start", user=vkid, payload={"command": "start"}))
+    assert sends(vkid), "боту показалось, что личка — это беседа, и он промолчал"
+    assert "вечеринка" in texts_of()[-1].lower(), texts_of()[-1]
+    # и обычный текст от него тоже разбирается как от человека
+    calls.clear()
+    await feed(msg("итмо", user=vkid))
+    assert sends(vkid) and "ИТМО" in texts_of()[-1], texts_of()[-1]
+
+    # 38е. сверка состава чата: служебных сообщений нет, но вступивших видно по списку
+    calls.clear()
+    await feed(msg(f"/single https://vk.me/join/OBSHIY2", user=ADMIN, peer=common_chat))
+    import app.members as members_mod
+    # два человека пришли по ссылке 1201 и вступили в чат — событий об этом не было
+    await feed(msg("Начать", user=1301, ref="r1201_common", payload={"command": "start"}))
+    await feed(msg("Начать", user=1302, ref="r1201_common", payload={"command": "start"}))
+    before = (await db.owner_stats(1201, "common"))[1]
+    MEMBERS[common_chat] = {1201, 1202, 1301, 1302}   # 1202 вступил ещё раньше
+    calls.clear()
+    counted, left = await members_mod.sync_chat(ctx, await db.get_chat_by_id(common_chat))
+    assert counted == 3, counted        # сам 1201 и двое пришедших по его ссылке
+    assert (await db.owner_stats(1201, "common"))[1] == before + 2
+    assert any("вступил" in p["message"] for p in sends(1201)), sends(1201)
+
+    # повторная сверка ничего не удваивает
+    counted, left = await members_mod.sync_chat(ctx, await db.get_chat_by_id(common_chat))
+    assert (counted, left) == (0, 0), (counted, left)
+
+    # человек вышел — сверка это заметит, приглашение перестанет засчитываться
+    MEMBERS[common_chat] = {1201, 1202, 1301}
+    counted, left = await members_mod.sync_chat(ctx, await db.get_chat_by_id(common_chat))
+    assert (counted, left) == (0, 1), (counted, left)
+    assert (await db.owner_stats(1201, "common"))[1] == before + 1
+    MEMBERS.clear()
+    await feed(msg("/single off", user=ADMIN))    # дальше сценарии про вузы
 
     # 39. не-текст в личке (стикер, фото, голосовое) — бот всё равно отвечает
     calls.clear()

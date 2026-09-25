@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 # в общий чат. Значение — ключ псевдо-вуза, к которому привязан этот чат.
 SINGLE_CHAT = "single_chat"
 
+# Засчитывать приглашённого сразу, как он пришёл по личной ссылке и написал боту.
+# Нужно там, где бот не администратор чата: VK не присылает ему события о
+# вступлениях по ссылке, и ждать их бессмысленно.
+COUNT_ON_REF = "count_on_ref"
+
 # «[club123|@party_bot] /bind itmo» — так приходит сообщение с упоминанием бота в беседе
 _MENTION = re.compile(r"^\s*\[(?:club|public)\d+\|[^\]]*\]\s*[,:]?\s*")
 
@@ -35,7 +40,8 @@ class Message:
 
     @property
     def is_chat(self) -> bool:
-        return is_chat(self.peer_id)
+        # в личке peer_id всегда равен отправителю, в беседе — нет
+        return is_chat(self.peer_id) and self.peer_id != self.from_id
 
     @property
     def command(self) -> tuple[str, str] | None:

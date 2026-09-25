@@ -19,8 +19,12 @@ logger = logging.getLogger(__name__)
 
 API_URL = "https://api.vk.com/method/"
 API_VERSION = "5.199"
-# peer_id беседы = 2000000000 + её номер
+# peer_id беседы = 2000000000 + её номер. Номера бесед лежат заметно ниже миллиарда,
+# а id новых аккаунтов (VK ID) начинаются с сотен миллиардов — поэтому «всё, что больше
+# двух миллиардов, это беседа» неверно: личка такого человека считалась бы беседой,
+# и бот молчал бы в ответ на обычные сообщения.
 CHAT_PEER_OFFSET = 2_000_000_000
+CHAT_PEER_MAX = 3_000_000_000
 
 # коды ошибок, которые разбираем отдельно (полный список — errors.json в vk-api-schema)
 TOO_MANY_REQUESTS = 6        # слишком много запросов в секунду
@@ -82,7 +86,7 @@ class VkUser:
 
 
 def is_chat(peer_id: int) -> bool:
-    return peer_id >= CHAT_PEER_OFFSET
+    return CHAT_PEER_OFFSET <= peer_id < CHAT_PEER_MAX
 
 
 def _flatten(params: dict[str, Any]) -> dict[str, str]:

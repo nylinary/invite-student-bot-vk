@@ -749,6 +749,27 @@ async def cmd_makechats(ctx: Ctx, message: Message, arg: str = "") -> None:
     await ctx.reply(message.peer_id, text, markup)
 
 
+async def cmd_refcount(ctx: Ctx, message: Message, arg: str = "") -> None:
+    """Засчитывать приглашённого по переходу в бота, не дожидаясь вступления в чат."""
+    from app.bot import COUNT_ON_REF
+
+    want = arg.strip().lower()
+    if want in ("on", "вкл", "да"):
+        await ctx.db.set_setting(COUNT_ON_REF, "1")
+        text = ("✅ Засчитываю приглашённых по переходу в бота.\n\n"
+                "Это нужно там, где бот не администратор чата: VK не присылает ему "
+                "вступления по ссылке. Минус — человека засчитает, даже если он в чат "
+                "не зайдёт. Защита от накрутки работает как раньше.")
+    elif want in ("off", "выкл", "нет"):
+        await ctx.db.set_setting(COUNT_ON_REF, "")
+        text = "✅ Засчитываю только по вступлению в чат."
+    else:
+        on = await ctx.db.get_setting(COUNT_ON_REF, "") == "1"
+        text = (f"Сейчас: {'по переходу в бота' if on else 'по вступлению в чат'}.\n"
+                f"Переключить: /refcount on или /refcount off")
+    await ctx.reply(message.peer_id, text, kb.admin_back_kb())
+
+
 async def cmd_ticket(ctx: Ctx, message: Message, code: str) -> None:
     """Проверка билета по коду — для тех, кто стоит на входе."""
     if not code:
@@ -773,6 +794,7 @@ async def cmd_ticket(ctx: Ctx, message: Message, code: str) -> None:
 
 
 ADMIN_COMMANDS = {
+    "refcount": cmd_refcount,
     "makechats": cmd_makechats,
     "admin": cmd_admin,
     "chats": cmd_chats,

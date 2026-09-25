@@ -443,6 +443,13 @@ class Database:
             "UPDATE joins SET left_at = now() WHERE chat_id = $1 AND user_id = $2", chat_id, user_id
         )
 
+    async def chat_members(self, chat_id: int) -> dict[int, bool]:
+        """{user_id: вышел ли} по записям бота — с этим сверяется реальный состав чата."""
+        rows = await self.pool.fetch(
+            "SELECT user_id, left_at FROM joins WHERE chat_id = $1", chat_id
+        )
+        return {row["user_id"]: row["left_at"] is not None for row in rows}
+
     async def owner_stats(self, owner_id: int, key: str | None = None) -> tuple[int, int]:
         """(сколько человек он привёл, из них сейчас в чате).
 
@@ -705,6 +712,12 @@ class Database:
             broadcast_id, offset, sent, failed,
         )
 
+    async def finish_broadcast_canceled(self, broadcast_id: int, sent: int, failed: int) -> None:
+        await self.pool.execute(
+            "UPDATE broadcasts SET sent = $2, failed = $3, finished_at = now() WHERE id = $1",
+            broadcast_id, sent, failed,
+        )
+
     async def requeue_stuck_broadcasts(self) -> list[int]:
         """После перезапуска: то, что осталось в статусе «отправляется», снова в очередь."""
         rows = await self.pool.fetch(
@@ -720,12 +733,16 @@ class Database:
         )
 
     async def cancel_broadcast(self, broadcast_id: int) -> bool:
+        """Отменяет и запланированную, и уже идущую: отправщик увидит смену статуса."""
         row = await self.pool.fetchrow(
             "UPDATE broadcasts SET status = 'canceled', finished_at = now() "
-            "WHERE id = $1 AND status = 'pending' RETURNING id",
+            "WHERE id = $1 AND status IN ('pending', 'sending') RETURNING id",
             broadcast_id,
         )
         return row is not None
+
+    async def broadcast_status(self, broadcast_id: int) -> str | None:
+        return await self.pool.fetchval("SELECT status FROM broadcasts WHERE id = $1", broadcast_id)
 
     _AUDIENCE_CTE = """
         WITH inv AS (

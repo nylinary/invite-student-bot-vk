@@ -206,6 +206,18 @@ async def deliver(api: VkApi, db: Database, registry: UniversityRegistry, row) -
     position = offset
 
     while position < len(targets):
+        # организатор мог нажать «отменить» уже после старта — проверяем каждую пачку
+        if await db.broadcast_status(row["id"]) != "sending":
+            await db.save_broadcast_progress(row["id"], position, sender.sent, sender.failed)
+            await db.finish_broadcast_canceled(row["id"], sender.sent, sender.failed)
+            logger.info("Рассылка %s отменена на %s-м получателе", row["id"], position)
+            await _report(
+                api, row["created_by"],
+                f"⛔️ Рассылка #{row['id']} остановлена.\n"
+                f"Успели отправить: {sender.sent}, осталось: {len(targets) - position}.",
+            )
+            return
+
         size = SEND_BATCH if quota is None else min(SEND_BATCH, quota)
         if size <= 0:
             await _pause_until_tomorrow(api, db, row, position, sender, len(targets),
